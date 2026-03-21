@@ -202,7 +202,7 @@ export default function App() {
         />
 
         {/* Floating Left Panel (Dual Manipulator & MIDI Status) */}
-        <div className="absolute top-4 left-4 bg-slate-900/80 backdrop-blur border border-slate-700 p-4 rounded-xl shadow-2xl z-20 w-72 pointer-events-none">
+        <div className="absolute bottom-4 left-4 bg-slate-900/80 backdrop-blur border border-slate-700 p-4 rounded-xl shadow-2xl z-20 w-72 pointer-events-none">
           <h1 className="text-lg font-bold text-emerald-400 tracking-tight flex items-center gap-2">
             <Settings className="w-5 h-5" />
             Dual Manipulator
