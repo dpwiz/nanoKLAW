@@ -1,0 +1,5 @@
+{
+  "name": "N-Segment Manipulator",
+  "description": "Visualizes an 8-segment mechanical manipulator with rotational and linear encoder simulation.",
+  "requestFramePermissions": []
+}
