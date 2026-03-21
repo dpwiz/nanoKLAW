@@ -1,8 +1,17 @@
 import React, { useEffect, useRef, useState } from 'react';
+import { RefreshCw, Shuffle } from 'lucide-react';
 import { SegmentConfig } from '../types';
 
-interface Props {
+interface ArmConfig {
   segments: SegmentConfig[];
+  gripper: { rotation: number; extension: number };
+}
+
+interface Props {
+  arm1: ArmConfig;
+  arm2: ArmConfig;
+  onReset: () => void;
+  onRandomize: () => void;
 }
 
 interface Ball {
@@ -19,7 +28,7 @@ interface Ball {
   targetAngle?: number;
 }
 
-export default function ManipulatorVis({ segments }: Props) {
+export default function ManipulatorVis({ arm1, arm2, onReset, onRandomize }: Props) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const [dimensions, setDimensions] = useState({ width: 800, height: 600 });
@@ -28,11 +37,13 @@ export default function ManipulatorVis({ segments }: Props) {
   const isDragging = useRef(false);
   const lastMouse = useRef({ x: 0, y: 0 });
 
-  const latestSegments = useRef(segments);
+  const latestArm1 = useRef(arm1);
+  const latestArm2 = useRef(arm2);
   const latestTransform = useRef(transform);
   const latestDimensions = useRef(dimensions);
 
-  useEffect(() => { latestSegments.current = segments; }, [segments]);
+  useEffect(() => { latestArm1.current = arm1; }, [arm1]);
+  useEffect(() => { latestArm2.current = arm2; }, [arm2]);
   useEffect(() => { latestTransform.current = transform; }, [transform]);
   useEffect(() => { latestDimensions.current = dimensions; }, [dimensions]);
 
@@ -82,7 +93,7 @@ export default function ManipulatorVis({ segments }: Props) {
         y: (Math.random() - 0.5) * 1000,
         vx: 0,
         vy: 0,
-        radius: i === 0 ? 30 : 15 + Math.random() * 15,
+        radius: i === 0 ? 20 : 10 + Math.random() * 10,
         color: i === 0 ? '#333333' : colors[Math.floor(Math.random() * colors.length)],
         isVacuum: i === 0,
         angle: i === 0 ? Math.random() * Math.PI * 2 : undefined,
@@ -103,11 +114,242 @@ export default function ManipulatorVis({ segments }: Props) {
 
     let animationFrameId: number;
 
+    const computeArmSegments = (arm: ArmConfig, startX: number, startY: number, startAngle: number) => {
+      let currentX = startX;
+      let currentY = startY;
+      let currentAngle = startAngle;
+      const segments: {x1: number, y1: number, x2: number, y2: number, radius: number}[] = [];
+
+      arm.segments.forEach((seg) => {
+        const relativeAngleDeg = ((seg.rotation - 64) / 64) * 135;
+        const relativeAngleRad = (relativeAngleDeg * Math.PI) / 180;
+        currentAngle += relativeAngleRad;
+        const length = 40 + (seg.extension / 127) * (120 - 40);
+        
+        const nextX = currentX + Math.cos(currentAngle) * length;
+        const nextY = currentY + Math.sin(currentAngle) * length;
+        
+        segments.push({
+          x1: currentX, y1: currentY,
+          x2: nextX, y2: nextY,
+          radius: 12
+        });
+        
+        currentX = nextX;
+        currentY = nextY;
+      });
+
+      const grip = arm.gripper;
+      const gripperAngleDeg = ((grip.rotation - 64) / 64) * 135;
+      const gripperAngleRad = (gripperAngleDeg * Math.PI) / 180;
+      const finalAngle = currentAngle + gripperAngleRad;
+
+      const gripperBaseX = currentX + Math.cos(finalAngle) * 15;
+      const gripperBaseY = currentY + Math.sin(finalAngle) * 15;
+      segments.push({
+        x1: currentX, y1: currentY,
+        x2: gripperBaseX, y2: gripperBaseY,
+        radius: 15
+      });
+
+      const openAmount = (grip.extension / 127) * 15;
+
+      // Top Jaw
+      const topJawBaseLocalY = -10 - openAmount;
+      const topJawMidLocalY = -20 - openAmount;
+      const topJawTipLocalY = -10 - openAmount;
+
+      const topJawStartX = currentX + Math.cos(finalAngle) * 15 - Math.sin(finalAngle) * topJawBaseLocalY;
+      const topJawStartY = currentY + Math.sin(finalAngle) * 15 + Math.cos(finalAngle) * topJawBaseLocalY;
+
+      const topJawMidX = currentX + Math.cos(finalAngle) * 35 - Math.sin(finalAngle) * topJawMidLocalY;
+      const topJawMidY = currentY + Math.sin(finalAngle) * 35 + Math.cos(finalAngle) * topJawMidLocalY;
+
+      const topJawEndX = currentX + Math.cos(finalAngle) * 55 - Math.sin(finalAngle) * topJawTipLocalY;
+      const topJawEndY = currentY + Math.sin(finalAngle) * 55 + Math.cos(finalAngle) * topJawTipLocalY;
+
+      segments.push({
+        x1: topJawStartX, y1: topJawStartY,
+        x2: topJawMidX, y2: topJawMidY,
+        radius: 5
+      });
+      segments.push({
+        x1: topJawMidX, y1: topJawMidY,
+        x2: topJawEndX, y2: topJawEndY,
+        radius: 5
+      });
+
+      // Bottom Jaw
+      const botJawBaseLocalY = 10 + openAmount;
+      const botJawMidLocalY = 20 + openAmount;
+      const botJawTipLocalY = 10 + openAmount;
+
+      const botJawStartX = currentX + Math.cos(finalAngle) * 15 - Math.sin(finalAngle) * botJawBaseLocalY;
+      const botJawStartY = currentY + Math.sin(finalAngle) * 15 + Math.cos(finalAngle) * botJawBaseLocalY;
+
+      const botJawMidX = currentX + Math.cos(finalAngle) * 35 - Math.sin(finalAngle) * botJawMidLocalY;
+      const botJawMidY = currentY + Math.sin(finalAngle) * 35 + Math.cos(finalAngle) * botJawMidLocalY;
+
+      const botJawEndX = currentX + Math.cos(finalAngle) * 55 - Math.sin(finalAngle) * botJawTipLocalY;
+      const botJawEndY = currentY + Math.sin(finalAngle) * 55 + Math.cos(finalAngle) * botJawTipLocalY;
+
+      segments.push({
+        x1: botJawStartX, y1: botJawStartY,
+        x2: botJawMidX, y2: botJawMidY,
+        radius: 5
+      });
+      segments.push({
+        x1: botJawMidX, y1: botJawMidY,
+        x2: botJawEndX, y2: botJawEndY,
+        radius: 5
+      });
+
+      return segments;
+    };
+
+    const renderArm = (ctx: CanvasRenderingContext2D, arm: ArmConfig, startX: number, startY: number, startAngle: number, scale: number) => {
+      let currentX = startX;
+      let currentY = startY;
+      let currentAngle = startAngle;
+
+      // Draw base mount
+      ctx.save();
+      ctx.translate(startX, startY);
+      ctx.rotate(startAngle + Math.PI/2); // orient base
+      ctx.fillStyle = '#1e293b';
+      ctx.fillRect(-40, -10, 80, 20);
+      ctx.fillStyle = '#334155';
+      ctx.beginPath();
+      ctx.arc(0, 0, 24, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.strokeStyle = '#10b981';
+      ctx.lineWidth = 2 / scale;
+      ctx.stroke();
+      ctx.restore();
+
+      arm.segments.forEach((seg, i) => {
+        const relativeAngleDeg = ((seg.rotation - 64) / 64) * 135; 
+        const relativeAngleRad = (relativeAngleDeg * Math.PI) / 180;
+        
+        currentAngle += relativeAngleRad;
+
+        const minLen = 40;
+        const maxLen = 120;
+        const length = minLen + (seg.extension / 127) * (maxLen - minLen);
+
+        const nextX = currentX + Math.cos(currentAngle) * length;
+        const nextY = currentY + Math.sin(currentAngle) * length;
+
+        ctx.save();
+        ctx.translate(currentX, currentY);
+        ctx.rotate(currentAngle);
+        
+        // Piston rod
+        ctx.fillStyle = '#94a3b8'; 
+        ctx.fillRect(0, -5, length, 10);
+        
+        // Rod texture
+        ctx.strokeStyle = '#64748b';
+        ctx.lineWidth = 1 / scale;
+        for(let r = 30; r < length - 10; r += 10) {
+          ctx.beginPath();
+          ctx.moveTo(r, -5);
+          ctx.lineTo(r, 5);
+          ctx.stroke();
+        }
+
+        // Cylinder body
+        const cylinderLen = 35;
+        ctx.fillStyle = '#334155'; 
+        ctx.fillRect(0, -12, cylinderLen, 24);
+        ctx.strokeStyle = '#3b82f6';
+        ctx.lineWidth = 2 / scale;
+        ctx.strokeRect(0, -12, cylinderLen, 24);
+        
+        // Cylinder accents
+        ctx.fillStyle = '#0f172a';
+        ctx.fillRect(cylinderLen - 10, -14, 10, 28);
+
+        // Joint index label
+        ctx.save();
+        ctx.translate(cylinderLen / 2, 0);
+        ctx.fillStyle = '#94a3b8';
+        ctx.font = `${10 / scale}px monospace`;
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillText(`S${seg.id}`, 0, 0);
+        ctx.restore();
+
+        ctx.restore();
+
+        // Draw joint pivot
+        ctx.fillStyle = '#1e293b';
+        ctx.beginPath();
+        ctx.arc(nextX, nextY, 12, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.strokeStyle = '#10b981';
+        ctx.lineWidth = 2 / scale;
+        ctx.stroke();
+        
+        // Inner pin
+        ctx.fillStyle = '#cbd5e1';
+        ctx.beginPath();
+        ctx.arc(nextX, nextY, 4, 0, Math.PI * 2);
+        ctx.fill();
+
+        currentX = nextX;
+        currentY = nextY;
+      });
+
+      // Draw end effector (gripper)
+      ctx.save();
+      ctx.translate(currentX, currentY);
+      
+      // Gripper rotation
+      const grip = arm.gripper;
+      const renderGripperAngleDeg = ((grip.rotation - 64) / 64) * 135;
+      const renderGripperAngleRad = (renderGripperAngleDeg * Math.PI) / 180;
+      ctx.rotate(currentAngle + renderGripperAngleRad);
+      
+      // Gripper base
+      ctx.fillStyle = '#334155';
+      ctx.fillRect(0, -15, 15, 30);
+      
+      // Gripper extension (open/close)
+      // extension: 0 = fully closed, 127 = fully open
+      const renderOpenAmount = (grip.extension / 127) * 15;
+      
+      ctx.fillStyle = '#ef4444';
+      
+      // Top jaw
+      ctx.beginPath();
+      ctx.moveTo(15, -15 - renderOpenAmount);
+      ctx.lineTo(35, -25 - renderOpenAmount);
+      ctx.lineTo(55, -15 - renderOpenAmount);
+      ctx.lineTo(55, -5 - renderOpenAmount);
+      ctx.lineTo(35, -15 - renderOpenAmount);
+      ctx.lineTo(15, -5 - renderOpenAmount);
+      ctx.fill();
+      
+      // Bottom jaw
+      ctx.beginPath();
+      ctx.moveTo(15, 15 + renderOpenAmount);
+      ctx.lineTo(35, 25 + renderOpenAmount);
+      ctx.lineTo(55, 15 + renderOpenAmount);
+      ctx.lineTo(55, 5 + renderOpenAmount);
+      ctx.lineTo(35, 15 + renderOpenAmount);
+      ctx.lineTo(15, 5 + renderOpenAmount);
+      ctx.fill();
+
+      ctx.restore();
+    };
+
     const render = () => {
       const dpr = window.devicePixelRatio || 1;
       const { width, height } = latestDimensions.current;
       const transform = latestTransform.current;
-      const segs = latestSegments.current;
+      const a1 = latestArm1.current;
+      const a2 = latestArm2.current;
 
       if (canvas.width !== width * dpr || canvas.height !== height * dpr) {
         canvas.width = width * dpr;
@@ -123,38 +365,12 @@ export default function ManipulatorVis({ segments }: Props) {
       ctx.scale(transform.scale, transform.scale);
 
       // --- PHYSICS ---
-      let currentX = 0;
-      let currentY = 0;
-      let currentAngle = -Math.PI / 2;
-      
-      const currentArmSegments: {x1: number, y1: number, x2: number, y2: number, radius: number}[] = [];
+      // Arm 1 positioned at x: -200, y: 0
+      const arm1Segments = computeArmSegments(a1, -200, 0, -Math.PI / 2);
+      // Arm 2 positioned at x: 200, y: 0
+      const arm2Segments = computeArmSegments(a2, 200, 0, -Math.PI / 2);
 
-      segs.forEach((seg) => {
-        const relativeAngleDeg = ((seg.rotation - 64) / 64) * 135;
-        const relativeAngleRad = (relativeAngleDeg * Math.PI) / 180;
-        currentAngle += relativeAngleRad;
-        const length = 40 + (seg.extension / 127) * (120 - 40);
-        
-        const nextX = currentX + Math.cos(currentAngle) * length;
-        const nextY = currentY + Math.sin(currentAngle) * length;
-        
-        currentArmSegments.push({
-          x1: currentX, y1: currentY,
-          x2: nextX, y2: nextY,
-          radius: 12
-        });
-        
-        currentX = nextX;
-        currentY = nextY;
-      });
-
-      const effectorX = currentX + Math.cos(currentAngle) * 25;
-      const effectorY = currentY + Math.sin(currentAngle) * 25;
-      currentArmSegments.push({
-        x1: currentX, y1: currentY,
-        x2: effectorX, y2: effectorY,
-        radius: 20
-      });
+      const currentArmSegments = [...arm1Segments, ...arm2Segments];
 
       const prevArmSegments = prevArmSegmentsRef.current.length > 0 ? prevArmSegmentsRef.current : currentArmSegments;
       prevArmSegmentsRef.current = currentArmSegments;
@@ -372,121 +588,10 @@ export default function ManipulatorVis({ segments }: Props) {
         }
       });
 
-      // Draw manipulator
-      currentX = 0;
-      currentY = 0;
-      currentAngle = -Math.PI / 2;
+      // Draw manipulators
+      renderArm(ctx, a1, -200, 0, -Math.PI / 2, transform.scale);
+      renderArm(ctx, a2, 200, 0, -Math.PI / 2, transform.scale);
 
-      // Draw base mount
-      ctx.fillStyle = '#1e293b';
-      ctx.fillRect(-40, -10, 80, 20);
-      ctx.fillStyle = '#334155';
-      ctx.beginPath();
-      ctx.arc(0, 0, 24, 0, Math.PI * 2);
-      ctx.fill();
-      ctx.strokeStyle = '#10b981';
-      ctx.lineWidth = 2 / transform.scale;
-      ctx.stroke();
-
-      segs.forEach((seg, i) => {
-        const relativeAngleDeg = ((seg.rotation - 64) / 64) * 135; 
-        const relativeAngleRad = (relativeAngleDeg * Math.PI) / 180;
-        
-        currentAngle += relativeAngleRad;
-
-        const minLen = 40;
-        const maxLen = 120;
-        const length = minLen + (seg.extension / 127) * (maxLen - minLen);
-
-        const nextX = currentX + Math.cos(currentAngle) * length;
-        const nextY = currentY + Math.sin(currentAngle) * length;
-
-        ctx.save();
-        ctx.translate(currentX, currentY);
-        ctx.rotate(currentAngle);
-        
-        // Piston rod
-        ctx.fillStyle = '#94a3b8'; 
-        ctx.fillRect(0, -5, length, 10);
-        
-        // Rod texture
-        ctx.strokeStyle = '#64748b';
-        ctx.lineWidth = 1 / transform.scale;
-        for(let r = 30; r < length - 10; r += 10) {
-          ctx.beginPath();
-          ctx.moveTo(r, -5);
-          ctx.lineTo(r, 5);
-          ctx.stroke();
-        }
-
-        // Cylinder body
-        const cylinderLen = 35;
-        ctx.fillStyle = '#334155'; 
-        ctx.fillRect(0, -12, cylinderLen, 24);
-        ctx.strokeStyle = '#3b82f6';
-        ctx.lineWidth = 2 / transform.scale;
-        ctx.strokeRect(0, -12, cylinderLen, 24);
-        
-        // Cylinder accents
-        ctx.fillStyle = '#0f172a';
-        ctx.fillRect(cylinderLen - 10, -14, 10, 28);
-
-        // Joint index label
-        ctx.save();
-        ctx.translate(cylinderLen / 2, 0);
-        ctx.fillStyle = '#94a3b8';
-        ctx.font = `${10 / transform.scale}px monospace`;
-        ctx.textAlign = 'center';
-        ctx.textBaseline = 'middle';
-        ctx.fillText(`S${i+1}`, 0, 0);
-        ctx.restore();
-
-        ctx.restore();
-
-        // Draw joint pivot
-        ctx.fillStyle = '#1e293b';
-        ctx.beginPath();
-        ctx.arc(nextX, nextY, 12, 0, Math.PI * 2);
-        ctx.fill();
-        ctx.strokeStyle = '#10b981';
-        ctx.lineWidth = 2 / transform.scale;
-        ctx.stroke();
-        
-        // Inner pin
-        ctx.fillStyle = '#cbd5e1';
-        ctx.beginPath();
-        ctx.arc(nextX, nextY, 4, 0, Math.PI * 2);
-        ctx.fill();
-
-        currentX = nextX;
-        currentY = nextY;
-      });
-
-      // Draw end effector
-      ctx.save();
-      ctx.translate(currentX, currentY);
-      ctx.rotate(currentAngle);
-      
-      ctx.fillStyle = '#334155';
-      ctx.fillRect(0, -15, 15, 30);
-      
-      ctx.fillStyle = '#ef4444';
-      ctx.beginPath();
-      ctx.moveTo(15, -15);
-      ctx.lineTo(35, -15);
-      ctx.lineTo(35, -5);
-      ctx.lineTo(15, -5);
-      ctx.fill();
-      
-      ctx.beginPath();
-      ctx.moveTo(15, 5);
-      ctx.lineTo(35, 5);
-      ctx.lineTo(35, 15);
-      ctx.lineTo(15, 15);
-      ctx.fill();
-
-      ctx.restore();
-      
       ctx.restore(); // restore transform
       ctx.restore(); // restore dpr
 
@@ -507,7 +612,13 @@ export default function ManipulatorVis({ segments }: Props) {
     if (!isDragging.current) return;
     const dx = e.clientX - lastMouse.current.x;
     const dy = e.clientY - lastMouse.current.y;
-    setTransform(prev => ({ ...prev, x: prev.x + dx, y: prev.y + dy }));
+    
+    setTransform(prev => ({
+      ...prev,
+      x: prev.x + dx,
+      y: prev.y + dy
+    }));
+    
     lastMouse.current = { x: e.clientX, y: e.clientY };
   };
 
@@ -518,7 +629,7 @@ export default function ManipulatorVis({ segments }: Props) {
   return (
     <div 
       ref={containerRef} 
-      className="absolute inset-0 overflow-hidden cursor-grab active:cursor-grabbing"
+      className="w-full h-full relative overflow-hidden"
       onMouseDown={handleMouseDown}
       onMouseMove={handleMouseMove}
       onMouseUp={handleMouseUp}
@@ -526,20 +637,33 @@ export default function ManipulatorVis({ segments }: Props) {
     >
       <canvas
         ref={canvasRef}
-        className="w-full h-full block"
-        style={{ width: dimensions.width, height: dimensions.height }}
+        className="absolute inset-0 w-full h-full cursor-grab active:cursor-grabbing"
       />
       
-      <div className="absolute top-4 right-4 bg-slate-900/80 backdrop-blur border border-slate-700 p-4 rounded-xl shadow-2xl pointer-events-none">
-        <h3 className="text-emerald-400 font-mono text-sm mb-2">SYSTEM STATUS</h3>
-        <div className="grid grid-cols-2 gap-x-6 gap-y-1 text-xs font-mono text-slate-300">
-          <div>JOINTS: 8</div>
-          <div>DOF: 16</div>
-          <div>SCALE: {transform.scale.toFixed(2)}x</div>
-          <div>MODE: MANUAL</div>
+      <div className="absolute top-4 right-4 bg-slate-900/80 backdrop-blur border border-slate-700 p-4 rounded-xl shadow-2xl flex flex-col gap-4">
+        <div>
+          <h3 className="text-emerald-400 font-mono text-sm mb-2">SYSTEM STATUS</h3>
+          <div className="grid grid-cols-2 gap-x-6 gap-y-1 text-xs font-mono text-slate-300">
+            <div>ARMS: 2</div>
+            <div>DOF: 16</div>
+            <div>SCALE: {transform.scale.toFixed(2)}x</div>
+            <div>MODE: DUAL</div>
+          </div>
         </div>
-        <div className="mt-3 text-[10px] text-slate-500">
-          Scroll to zoom, drag to pan
+        
+        <div className="flex gap-2 pt-3 border-t border-slate-700/50">
+          <button 
+            onClick={onReset}
+            className="flex-1 flex items-center justify-center gap-2 bg-slate-800 hover:bg-slate-700 text-slate-300 py-1.5 rounded-lg text-xs font-semibold transition-colors border border-slate-700"
+          >
+            <RefreshCw className="w-3 h-3" /> Reset
+          </button>
+          <button 
+            onClick={onRandomize}
+            className="flex-1 flex items-center justify-center gap-2 bg-slate-800 hover:bg-slate-700 text-slate-300 py-1.5 rounded-lg text-xs font-semibold transition-colors border border-slate-700"
+          >
+            <Shuffle className="w-3 h-3" /> Random
+          </button>
         </div>
       </div>
     </div>
