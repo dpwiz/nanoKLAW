@@ -12,6 +12,8 @@ interface Props {
   arm2: ArmConfig;
   onReset: () => void;
   onRandomize: () => void;
+  isVacuumActive?: boolean;
+  markerTrigger?: number;
 }
 
 interface Ball {
@@ -23,12 +25,12 @@ interface Ball {
   color: string;
   isVacuum?: boolean;
   angle?: number;
-  state?: 'rolling' | 'turning' | 'reversing';
+  state?: 'rolling' | 'turning' | 'reversing' | 'seeking';
   stateTimer?: number;
   targetAngle?: number;
 }
 
-export default function ManipulatorVis({ arm1, arm2, onReset, onRandomize }: Props) {
+export default function ManipulatorVis({ arm1, arm2, onReset, onRandomize, isVacuumActive = true, markerTrigger = 0 }: Props) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const [dimensions, setDimensions] = useState({ width: 800, height: 600 });
@@ -41,14 +43,26 @@ export default function ManipulatorVis({ arm1, arm2, onReset, onRandomize }: Pro
   const latestArm2 = useRef(arm2);
   const latestTransform = useRef(transform);
   const latestDimensions = useRef(dimensions);
+  const latestVacuumActive = useRef(isVacuumActive);
 
   useEffect(() => { latestArm1.current = arm1; }, [arm1]);
   useEffect(() => { latestArm2.current = arm2; }, [arm2]);
   useEffect(() => { latestTransform.current = transform; }, [transform]);
   useEffect(() => { latestDimensions.current = dimensions; }, [dimensions]);
+  useEffect(() => { latestVacuumActive.current = isVacuumActive; }, [isVacuumActive]);
 
   const ballsRef = useRef<Ball[]>([]);
+  const markersRef = useRef<{x: number, y: number}[]>([]);
   const prevArmSegmentsRef = useRef<{x1: number, y1: number, x2: number, y2: number, radius: number}[]>([]);
+
+  useEffect(() => {
+    if (markerTrigger && markerTrigger > 0) {
+      markersRef.current.push({
+        x: (Math.random() - 0.5) * 1400, // bounds is 800, so -700 to 700
+        y: (Math.random() - 0.5) * 1400
+      });
+    }
+  }, [markerTrigger]);
 
   useEffect(() => {
     const observer = new ResizeObserver((entries) => {
@@ -85,24 +99,83 @@ export default function ManipulatorVis({ arm1, arm2, onReset, onRandomize }: Pro
 
   // Initialize balls
   useEffect(() => {
+    let loadedBalls: Ball[] | null = null;
+    const savedBalls = localStorage.getItem('manipulatorBallsState');
+    if (savedBalls) {
+      try {
+        const parsed = JSON.parse(savedBalls);
+        if (Array.isArray(parsed) && parsed.length > 0) {
+          loadedBalls = parsed;
+        }
+      } catch (e) {
+        console.error("Failed to parse saved balls state", e);
+      }
+    }
+
+    if (loadedBalls) {
+      let vacuumCount = loadedBalls.filter(b => b.isVacuum).length;
+      while (vacuumCount < 2) {
+        loadedBalls.unshift({
+          x: (Math.random() - 0.5) * 1000,
+          y: (Math.random() - 0.5) * 1000,
+          vx: 0, vy: 0,
+          radius: 20,
+          color: '#333333',
+          isVacuum: true,
+          angle: Math.random() * Math.PI * 2,
+          state: 'rolling',
+          stateTimer: 0,
+          targetAngle: 0,
+        });
+        vacuumCount++;
+      }
+      ballsRef.current = loadedBalls;
+    }
+
+    const savedMarkers = localStorage.getItem('manipulatorMarkersState');
+    if (savedMarkers) {
+      try {
+        const parsed = JSON.parse(savedMarkers);
+        if (Array.isArray(parsed)) {
+          markersRef.current = parsed;
+        }
+      } catch (e) {
+        console.error("Failed to parse saved markers state", e);
+      }
+    }
+
+    if (ballsRef.current.length > 0) return;
+
     const colors = ['#ef4444', '#f59e0b', '#10b981', '#3b82f6', '#8b5cf6', '#ec4899', '#06b6d4', '#eab308'];
     const initialBalls: Ball[] = [];
     for (let i = 0; i < 30; i++) {
+      const isVac = i < 2;
       initialBalls.push({
         x: (Math.random() - 0.5) * 1000,
         y: (Math.random() - 0.5) * 1000,
         vx: 0,
         vy: 0,
-        radius: i === 0 ? 20 : 10 + Math.random() * 10,
-        color: i === 0 ? '#333333' : colors[Math.floor(Math.random() * colors.length)],
-        isVacuum: i === 0,
-        angle: i === 0 ? Math.random() * Math.PI * 2 : undefined,
-        state: i === 0 ? 'rolling' : undefined,
-        stateTimer: i === 0 ? 0 : undefined,
-        targetAngle: i === 0 ? 0 : undefined,
+        radius: isVac ? 20 : 10 + Math.random() * 10,
+        color: isVac ? '#333333' : colors[Math.floor(Math.random() * colors.length)],
+        isVacuum: isVac,
+        angle: isVac ? Math.random() * Math.PI * 2 : undefined,
+        state: isVac ? 'rolling' : undefined,
+        stateTimer: isVac ? 0 : undefined,
+        targetAngle: isVac ? 0 : undefined,
       });
     }
     ballsRef.current = initialBalls;
+  }, []);
+
+  // Persist balls state periodically
+  useEffect(() => {
+    const interval = setInterval(() => {
+      if (ballsRef.current.length > 0) {
+        localStorage.setItem('manipulatorBallsState', JSON.stringify(ballsRef.current));
+      }
+      localStorage.setItem('manipulatorMarkersState', JSON.stringify(markersRef.current));
+    }, 1000);
+    return () => clearInterval(interval);
   }, []);
 
   // Animation & Physics loop
@@ -383,49 +456,92 @@ export default function ManipulatorVis({ arm1, arm2, onReset, onRandomize }: Pro
         const b = balls[i];
         
         if (b.isVacuum) {
-          b.stateTimer = (b.stateTimer || 0) + 1;
-          
-          let hitWall = false;
-          if (b.x < -bounds + b.radius + 5 || b.x > bounds - b.radius - 5 || 
-              b.y < -bounds + b.radius + 5 || b.y > bounds - b.radius - 5) {
-            hitWall = true;
-          }
-
-          if (hitWall && b.state !== 'reversing') {
-            b.state = 'reversing';
-            b.stateTimer = 0;
-            b.targetAngle = (b.angle || 0) + Math.PI + (Math.random() - 0.5) * Math.PI;
-          }
-
-          if (b.state === 'reversing') {
-            const speed = -2;
-            b.vx += (Math.cos(b.angle || 0) * speed - b.vx) * 0.1;
-            b.vy += (Math.sin(b.angle || 0) * speed - b.vy) * 0.1;
+          if (latestVacuumActive.current) {
+            b.stateTimer = (b.stateTimer || 0) + 1;
             
-            if (b.stateTimer > 30) {
-              b.state = 'turning';
-              b.stateTimer = 0;
+            let hitWall = false;
+            if (b.x < -bounds + b.radius + 5 || b.x > bounds - b.radius - 5 || 
+                b.y < -bounds + b.radius + 5 || b.y > bounds - b.radius - 5) {
+              hitWall = true;
             }
-          } else if (b.state === 'turning') {
-            const diff = (b.targetAngle || 0) - (b.angle || 0);
-            const normalizedDiff = Math.atan2(Math.sin(diff), Math.cos(diff));
-            
-            b.angle = (b.angle || 0) + Math.sign(normalizedDiff) * 0.05;
-            
-            if (Math.abs(normalizedDiff) < 0.1 || b.stateTimer > 60) {
-              b.state = 'rolling';
+
+            if (hitWall && b.state !== 'reversing') {
+              b.state = 'reversing';
               b.stateTimer = 0;
+              b.targetAngle = (b.angle || 0) + Math.PI + (Math.random() - 0.5) * Math.PI;
+            } else if (!hitWall && b.state !== 'reversing' && markersRef.current.length > 0) {
+              b.state = 'seeking';
+            } else if (!hitWall && b.state === 'seeking' && markersRef.current.length === 0) {
+              b.state = 'rolling';
+            }
+
+            if (b.state === 'reversing') {
+              const speed = -2;
+              b.vx += (Math.cos(b.angle || 0) * speed - b.vx) * 0.1;
+              b.vy += (Math.sin(b.angle || 0) * speed - b.vy) * 0.1;
+              
+              if (b.stateTimer > 30) {
+                b.state = markersRef.current.length > 0 ? 'seeking' : 'turning';
+                b.stateTimer = 0;
+              }
+            } else if (b.state === 'seeking') {
+              let closestIdx = 0;
+              let minDist = Infinity;
+              let closestDx = 0;
+              let closestDy = 0;
+
+              for (let m = 0; m < markersRef.current.length; m++) {
+                const marker = markersRef.current[m];
+                const dx = marker.x - b.x;
+                const dy = marker.y - b.y;
+                const dist = Math.sqrt(dx*dx + dy*dy);
+                if (dist < minDist) {
+                  minDist = dist;
+                  closestIdx = m;
+                  closestDx = dx;
+                  closestDy = dy;
+                }
+              }
+
+              if (minDist < b.radius + 15) {
+                markersRef.current.splice(closestIdx, 1);
+                b.state = markersRef.current.length > 0 ? 'seeking' : 'rolling';
+              } else {
+                b.targetAngle = Math.atan2(closestDy, closestDx);
+                const diff = (b.targetAngle || 0) - (b.angle || 0);
+                const normalizedDiff = Math.atan2(Math.sin(diff), Math.cos(diff));
+                
+                b.angle = (b.angle || 0) + Math.sign(normalizedDiff) * 0.08;
+                
+                const speed = 3.5;
+                b.vx += (Math.cos(b.angle || 0) * speed - b.vx) * 0.1;
+                b.vy += (Math.sin(b.angle || 0) * speed - b.vy) * 0.1;
+              }
+            } else if (b.state === 'turning') {
+              const diff = (b.targetAngle || 0) - (b.angle || 0);
+              const normalizedDiff = Math.atan2(Math.sin(diff), Math.cos(diff));
+              
+              b.angle = (b.angle || 0) + Math.sign(normalizedDiff) * 0.05;
+              
+              if (Math.abs(normalizedDiff) < 0.1 || b.stateTimer > 60) {
+                b.state = 'rolling';
+                b.stateTimer = 0;
+              }
+            } else {
+              if (b.stateTimer > 120 + Math.random() * 60) {
+                b.state = 'turning';
+                b.stateTimer = 0;
+                b.targetAngle = (b.angle || 0) + (Math.random() - 0.5) * Math.PI;
+              }
+              
+              const speed = 3;
+              b.vx += (Math.cos(b.angle || 0) * speed - b.vx) * 0.1;
+              b.vy += (Math.sin(b.angle || 0) * speed - b.vy) * 0.1;
             }
           } else {
-            if (b.stateTimer > 120 + Math.random() * 60) {
-              b.state = 'turning';
-              b.stateTimer = 0;
-              b.targetAngle = (b.angle || 0) + (Math.random() - 0.5) * Math.PI;
-            }
-            
-            const speed = 3;
-            b.vx += (Math.cos(b.angle || 0) * speed - b.vx) * 0.1;
-            b.vy += (Math.sin(b.angle || 0) * speed - b.vy) * 0.1;
+            // Apply strong friction when stopped to halt quickly
+            b.vx *= 0.5;
+            b.vy *= 0.5;
           }
         }
 
@@ -549,6 +665,26 @@ export default function ManipulatorVis({ arm1, arm2, onReset, onRandomize }: Pro
       ctx.moveTo(-gridExtent, 0); ctx.lineTo(gridExtent, 0);
       ctx.moveTo(0, -gridExtent); ctx.lineTo(0, gridExtent);
       ctx.stroke();
+
+      // Draw markers
+      markersRef.current.forEach(m => {
+        ctx.beginPath();
+        ctx.arc(m.x, m.y, 8, 0, Math.PI * 2);
+        ctx.fillStyle = '#10b981';
+        ctx.fill();
+        ctx.strokeStyle = '#047857';
+        ctx.lineWidth = 2 / transform.scale;
+        ctx.stroke();
+        
+        ctx.beginPath();
+        ctx.moveTo(m.x - 4, m.y - 4);
+        ctx.lineTo(m.x + 4, m.y + 4);
+        ctx.moveTo(m.x + 4, m.y - 4);
+        ctx.lineTo(m.x - 4, m.y + 4);
+        ctx.strokeStyle = '#fff';
+        ctx.lineWidth = 1.5 / transform.scale;
+        ctx.stroke();
+      });
 
       // Draw balls
       balls.forEach(b => {

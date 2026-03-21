@@ -37,16 +37,33 @@ export default function App() {
   
   const [arm2Segments, setArm2Segments] = useState<SegmentConfig[]>(() => loadState('arm2Segments', INITIAL_ARM2_SEGMENTS));
   const [arm2Gripper, setArm2Gripper] = useState(() => loadState('arm2Gripper', { rotation: 64, extension: 64 }));
+  const [isVacuumActive, setIsVacuumActive] = useState(() => loadState('isVacuumActive', true));
+  const [markerTrigger, setMarkerTrigger] = useState(0);
 
   useEffect(() => { localStorage.setItem('arm1Segments', JSON.stringify(arm1Segments)); }, [arm1Segments]);
   useEffect(() => { localStorage.setItem('arm1Gripper', JSON.stringify(arm1Gripper)); }, [arm1Gripper]);
   useEffect(() => { localStorage.setItem('arm2Segments', JSON.stringify(arm2Segments)); }, [arm2Segments]);
   useEffect(() => { localStorage.setItem('arm2Gripper', JSON.stringify(arm2Gripper)); }, [arm2Gripper]);
+  useEffect(() => { localStorage.setItem('isVacuumActive', JSON.stringify(isVacuumActive)); }, [isVacuumActive]);
 
   const [lastMidi, setLastMidi] = useState<{cc: number, value: number} | null>(null);
 
   const { deviceName, error } = useMIDI((cc, value) => {
     setLastMidi({ cc, value });
+
+    // Vacuum Control
+    if (cc === 42 && value === 127) {
+      setIsVacuumActive(false);
+      return;
+    }
+    if (cc === 41 && value === 127) {
+      setIsVacuumActive(true);
+      return;
+    }
+    if (cc === 45 && value === 127) {
+      setMarkerTrigger(prev => prev + 1);
+      return;
+    }
 
     // Arm 1 Gripper (CC 3, CC 19)
     if (cc === 3) {
@@ -180,6 +197,8 @@ export default function App() {
           arm2={{ segments: arm2Segments, gripper: arm2Gripper }} 
           onReset={handleReset}
           onRandomize={handleRandomize}
+          isVacuumActive={isVacuumActive}
+          markerTrigger={markerTrigger}
         />
 
         {/* Floating Left Panel (Dual Manipulator & MIDI Status) */}
