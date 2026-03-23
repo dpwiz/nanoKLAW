@@ -251,21 +251,30 @@ export default function ManipulatorVis({ arm1, arm2, onReset, onRandomize, isVac
         radius: 15
       });
 
-      const openAmount = (grip.extension / 127) * 15;
+      const openAngle = (grip.extension / 127) * (Math.PI / 4);
+
+      const rotateLocal = (lx: number, ly: number, cx: number, cy: number, angle: number) => {
+        const dx = lx - cx;
+        const dy = ly - cy;
+        return {
+          x: cx + dx * Math.cos(angle) - dy * Math.sin(angle),
+          y: cy + dx * Math.sin(angle) + dy * Math.cos(angle)
+        };
+      };
 
       // Top Jaw
-      const topJawBaseLocalY = -10 - openAmount;
-      const topJawMidLocalY = -20 - openAmount;
-      const topJawTipLocalY = -10 - openAmount;
+      const topBase = rotateLocal(15, -10, 15, -10, -openAngle);
+      const topMid = rotateLocal(35, -20, 15, -10, -openAngle);
+      const topTip = rotateLocal(55, -10, 15, -10, -openAngle);
 
-      const topJawStartX = currentX + Math.cos(finalAngle) * 15 - Math.sin(finalAngle) * topJawBaseLocalY;
-      const topJawStartY = currentY + Math.sin(finalAngle) * 15 + Math.cos(finalAngle) * topJawBaseLocalY;
+      const topJawStartX = currentX + Math.cos(finalAngle) * topBase.x - Math.sin(finalAngle) * topBase.y;
+      const topJawStartY = currentY + Math.sin(finalAngle) * topBase.x + Math.cos(finalAngle) * topBase.y;
 
-      const topJawMidX = currentX + Math.cos(finalAngle) * 35 - Math.sin(finalAngle) * topJawMidLocalY;
-      const topJawMidY = currentY + Math.sin(finalAngle) * 35 + Math.cos(finalAngle) * topJawMidLocalY;
+      const topJawMidX = currentX + Math.cos(finalAngle) * topMid.x - Math.sin(finalAngle) * topMid.y;
+      const topJawMidY = currentY + Math.sin(finalAngle) * topMid.x + Math.cos(finalAngle) * topMid.y;
 
-      const topJawEndX = currentX + Math.cos(finalAngle) * 55 - Math.sin(finalAngle) * topJawTipLocalY;
-      const topJawEndY = currentY + Math.sin(finalAngle) * 55 + Math.cos(finalAngle) * topJawTipLocalY;
+      const topJawEndX = currentX + Math.cos(finalAngle) * topTip.x - Math.sin(finalAngle) * topTip.y;
+      const topJawEndY = currentY + Math.sin(finalAngle) * topTip.x + Math.cos(finalAngle) * topTip.y;
 
       segments.push({
         x1: topJawStartX, y1: topJawStartY,
@@ -279,18 +288,18 @@ export default function ManipulatorVis({ arm1, arm2, onReset, onRandomize, isVac
       });
 
       // Bottom Jaw
-      const botJawBaseLocalY = 10 + openAmount;
-      const botJawMidLocalY = 20 + openAmount;
-      const botJawTipLocalY = 10 + openAmount;
+      const botBase = rotateLocal(15, 10, 15, 10, openAngle);
+      const botMid = rotateLocal(35, 20, 15, 10, openAngle);
+      const botTip = rotateLocal(55, 10, 15, 10, openAngle);
 
-      const botJawStartX = currentX + Math.cos(finalAngle) * 15 - Math.sin(finalAngle) * botJawBaseLocalY;
-      const botJawStartY = currentY + Math.sin(finalAngle) * 15 + Math.cos(finalAngle) * botJawBaseLocalY;
+      const botJawStartX = currentX + Math.cos(finalAngle) * botBase.x - Math.sin(finalAngle) * botBase.y;
+      const botJawStartY = currentY + Math.sin(finalAngle) * botBase.x + Math.cos(finalAngle) * botBase.y;
 
-      const botJawMidX = currentX + Math.cos(finalAngle) * 35 - Math.sin(finalAngle) * botJawMidLocalY;
-      const botJawMidY = currentY + Math.sin(finalAngle) * 35 + Math.cos(finalAngle) * botJawMidLocalY;
+      const botJawMidX = currentX + Math.cos(finalAngle) * botMid.x - Math.sin(finalAngle) * botMid.y;
+      const botJawMidY = currentY + Math.sin(finalAngle) * botMid.x + Math.cos(finalAngle) * botMid.y;
 
-      const botJawEndX = currentX + Math.cos(finalAngle) * 55 - Math.sin(finalAngle) * botJawTipLocalY;
-      const botJawEndY = currentY + Math.sin(finalAngle) * 55 + Math.cos(finalAngle) * botJawTipLocalY;
+      const botJawEndX = currentX + Math.cos(finalAngle) * botTip.x - Math.sin(finalAngle) * botTip.y;
+      const botJawEndY = currentY + Math.sin(finalAngle) * botTip.x + Math.cos(finalAngle) * botTip.y;
 
       segments.push({
         x1: botJawStartX, y1: botJawStartY,
@@ -416,29 +425,37 @@ export default function ManipulatorVis({ arm1, arm2, onReset, onRandomize, isVac
       
       // Gripper extension (open/close)
       // extension: 0 = fully closed, 127 = fully open
-      const renderOpenAmount = (grip.extension / 127) * 15;
+      const renderOpenAngle = (grip.extension / 127) * (Math.PI / 4);
       
       ctx.fillStyle = '#ef4444';
       
       // Top jaw
+      ctx.save();
+      ctx.translate(15, -10);
+      ctx.rotate(-renderOpenAngle);
       ctx.beginPath();
-      ctx.moveTo(15, -15 - renderOpenAmount);
-      ctx.lineTo(35, -25 - renderOpenAmount);
-      ctx.lineTo(55, -15 - renderOpenAmount);
-      ctx.lineTo(55, -5 - renderOpenAmount);
-      ctx.lineTo(35, -15 - renderOpenAmount);
-      ctx.lineTo(15, -5 - renderOpenAmount);
+      ctx.moveTo(0, -5);
+      ctx.lineTo(20, -15);
+      ctx.lineTo(40, -5);
+      ctx.lineTo(40, 5);
+      ctx.lineTo(20, -5);
+      ctx.lineTo(0, 5);
       ctx.fill();
+      ctx.restore();
       
       // Bottom jaw
+      ctx.save();
+      ctx.translate(15, 10);
+      ctx.rotate(renderOpenAngle);
       ctx.beginPath();
-      ctx.moveTo(15, 15 + renderOpenAmount);
-      ctx.lineTo(35, 25 + renderOpenAmount);
-      ctx.lineTo(55, 15 + renderOpenAmount);
-      ctx.lineTo(55, 5 + renderOpenAmount);
-      ctx.lineTo(35, 15 + renderOpenAmount);
-      ctx.lineTo(15, 5 + renderOpenAmount);
+      ctx.moveTo(0, 5);
+      ctx.lineTo(20, 15);
+      ctx.lineTo(40, 5);
+      ctx.lineTo(40, -5);
+      ctx.lineTo(20, 5);
+      ctx.lineTo(0, -5);
       ctx.fill();
+      ctx.restore();
 
       ctx.restore();
     };
