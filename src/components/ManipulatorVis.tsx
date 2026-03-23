@@ -93,9 +93,23 @@ export default function ManipulatorVis({ arm1, arm2, onReset, onRandomize, isVac
       e.preventDefault();
       const zoomSensitivity = 0.002;
       const delta = -e.deltaY * zoomSensitivity;
+      
+      const rect = canvas.getBoundingClientRect();
+      const mouseX = e.clientX - rect.left;
+      const mouseY = e.clientY - rect.top;
+      const cx = mouseX - rect.width / 2;
+      const cy = mouseY - rect.height / 2;
+
       setTransform(prev => {
         const newScale = Math.max(0.1, Math.min(5, prev.scale * (1 + delta)));
-        return { ...prev, scale: newScale };
+        const scaleRatio = newScale / prev.scale;
+        
+        return { 
+          ...prev, 
+          scale: newScale,
+          x: cx - (cx - prev.x) * scaleRatio,
+          y: cy - (cy - prev.y) * scaleRatio
+        };
       });
     };
 
