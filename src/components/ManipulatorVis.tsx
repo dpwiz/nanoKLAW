@@ -32,6 +32,7 @@ interface Ball {
   targetStation?: number;
   targetMarkerId?: number;
   timeSinceCharge?: number;
+  isDragged?: boolean;
 }
 
 export default function ManipulatorVis({ arm1, arm2, onReset, onRandomize, isVacuumActive = true, markerTrigger = 0 }: Props) {
@@ -41,7 +42,8 @@ export default function ManipulatorVis({ arm1, arm2, onReset, onRandomize, isVac
   const [robotStats, setRobotStats] = useState<{id: number, state: string, timeSinceCharge: number, cargo: number, stateTimer: number}[]>([]);
   
   const [transform, setTransform] = useState({ x: 0, y: 0, scale: 1 });
-  const isDragging = useRef(false);
+  const isPanning = useRef(false);
+  const draggedBallIdx = useRef<number | null>(null);
   const lastMouse = useRef({ x: 0, y: 0 });
 
   const latestArm1 = useRef(arm1);
@@ -735,18 +737,22 @@ export default function ManipulatorVis({ arm1, arm2, onReset, onRandomize, isVac
           }
         }
 
-        b.x += b.vx;
-        b.y += b.vy;
+        if (!b.isDragged) {
+          b.x += b.vx;
+          b.y += b.vy;
+        }
         
         // Increased floor friction (was 0.94)
         b.vx *= 0.82; 
         b.vy *= 0.82;
 
         // Bounds collision (more energy loss on bounce)
-        if (b.x < -bounds + b.radius) { b.x = -bounds + b.radius; b.vx *= -0.5; }
-        if (b.x > bounds - b.radius) { b.x = bounds - b.radius; b.vx *= -0.5; }
-        if (b.y < -bounds + b.radius) { b.y = -bounds + b.radius; b.vy *= -0.5; }
-        if (b.y > bounds - b.radius) { b.y = bounds - b.radius; b.vy *= -0.5; }
+        if (!b.isDragged) {
+          if (b.x < -bounds + b.radius) { b.x = -bounds + b.radius; b.vx *= -0.5; }
+          if (b.x > bounds - b.radius) { b.x = bounds - b.radius; b.vx *= -0.5; }
+          if (b.y < -bounds + b.radius) { b.y = -bounds + b.radius; b.vy *= -0.5; }
+          if (b.y > bounds - b.radius) { b.y = bounds - b.radius; b.vy *= -0.5; }
+        }
 
         // Arm collision (all segments)
         for (let s = 0; s < currentArmSegments.length; s++) {
@@ -776,8 +782,10 @@ export default function ManipulatorVis({ arm1, arm2, onReset, onRandomize, isVac
             const nx = distX / dist;
             const ny = distY / dist;
             
-            b.x += nx * overlap;
-            b.y += ny * overlap;
+            if (!b.isDragged) {
+              b.x += nx * overlap;
+              b.y += ny * overlap;
+            }
             
             const prevClosestX = prevSeg.x1 + t * (prevSeg.x2 - prevSeg.x1);
             const prevClosestY = prevSeg.y1 + t * (prevSeg.y2 - prevSeg.y1);
@@ -809,10 +817,14 @@ export default function ManipulatorVis({ arm1, arm2, onReset, onRandomize, isVac
             const massRatio1 = b2.radius / (b.radius + b2.radius);
             const massRatio2 = b.radius / (b.radius + b2.radius);
             
-            b.x -= nx * overlap * massRatio1;
-            b.y -= ny * overlap * massRatio1;
-            b2.x += nx * overlap * massRatio2;
-            b2.y += ny * overlap * massRatio2;
+            if (!b.isDragged) {
+              b.x -= nx * overlap * massRatio1;
+              b.y -= ny * overlap * massRatio1;
+            }
+            if (!b2.isDragged) {
+              b2.x += nx * overlap * massRatio2;
+              b2.y += ny * overlap * massRatio2;
+            }
 
             const kx = (b.vx - b2.vx);
             const ky = (b.vy - b2.vy);
@@ -957,26 +969,82 @@ export default function ManipulatorVis({ arm1, arm2, onReset, onRandomize, isVac
   }, []);
 
   const handleMouseDown = (e: React.MouseEvent) => {
-    isDragging.current = true;
-    lastMouse.current = { x: e.clientX, y: e.clientY };
+    if (e.button === 1) { // Middle click
+      isPanning.current = true;
+      lastMouse.current = { x: e.clientX, y: e.clientY };
+      e.preventDefault();
+    } else if (e.button === 0) { // Left click
+      const rect = containerRef.current?.getBoundingClientRect();
+      if (!rect) return;
+      
+      const mouseX = e.clientX - rect.left;
+      const mouseY = e.clientY - rect.top;
+      
+      const { width, height } = latestDimensions.current;
+      const { x: tx, y: ty, scale } = latestTransform.current;
+      
+      const worldX = (mouseX - (width / 2 + tx)) / scale;
+      const worldY = (mouseY - (height / 2 + ty)) / scale;
+      
+      const balls = ballsRef.current;
+      for (let i = balls.length - 1; i >= 0; i--) {
+        const b = balls[i];
+        const dx = b.x - worldX;
+        const dy = b.y - worldY;
+        // Add a little padding to the hit radius to make it easier to grab
+        if (dx * dx + dy * dy <= (b.radius + 5) * (b.radius + 5)) {
+          draggedBallIdx.current = i;
+          b.isDragged = true;
+          b.vx = 0;
+          b.vy = 0;
+          break;
+        }
+      }
+    }
   };
 
   const handleMouseMove = (e: React.MouseEvent) => {
-    if (!isDragging.current) return;
-    const dx = e.clientX - lastMouse.current.x;
-    const dy = e.clientY - lastMouse.current.y;
-    
-    setTransform(prev => ({
-      ...prev,
-      x: prev.x + dx,
-      y: prev.y + dy
-    }));
-    
-    lastMouse.current = { x: e.clientX, y: e.clientY };
+    if (isPanning.current) {
+      const dx = e.clientX - lastMouse.current.x;
+      const dy = e.clientY - lastMouse.current.y;
+      
+      setTransform(prev => ({
+        ...prev,
+        x: prev.x + dx,
+        y: prev.y + dy
+      }));
+      
+      lastMouse.current = { x: e.clientX, y: e.clientY };
+    } else if (draggedBallIdx.current !== null) {
+      const rect = containerRef.current?.getBoundingClientRect();
+      if (!rect) return;
+      
+      const mouseX = e.clientX - rect.left;
+      const mouseY = e.clientY - rect.top;
+      
+      const { width, height } = latestDimensions.current;
+      const { x: tx, y: ty, scale } = latestTransform.current;
+      
+      const worldX = (mouseX - (width / 2 + tx)) / scale;
+      const worldY = (mouseY - (height / 2 + ty)) / scale;
+      
+      const b = ballsRef.current[draggedBallIdx.current];
+      if (b) {
+        b.vx = worldX - b.x;
+        b.vy = worldY - b.y;
+        b.x = worldX;
+        b.y = worldY;
+      }
+    }
   };
 
   const handleMouseUp = () => {
-    isDragging.current = false;
+    isPanning.current = false;
+    if (draggedBallIdx.current !== null) {
+      const b = ballsRef.current[draggedBallIdx.current];
+      if (b) b.isDragged = false;
+      draggedBallIdx.current = null;
+    }
   };
 
   return (
