@@ -245,12 +245,16 @@ export default function ManipulatorVis({ arm1, arm2, onReset, onRandomize, isVac
       const gripperAngleRad = (gripperAngleDeg * Math.PI) / 180;
       const finalAngle = currentAngle + gripperAngleRad;
 
-      const gripperBaseX = currentX + Math.cos(finalAngle) * 15;
-      const gripperBaseY = currentY + Math.sin(finalAngle) * 15;
+      const baseTopX = currentX + Math.cos(finalAngle) * 7.5 - Math.sin(finalAngle) * -7.5;
+      const baseTopY = currentY + Math.sin(finalAngle) * 7.5 + Math.cos(finalAngle) * -7.5;
+      
+      const baseBotX = currentX + Math.cos(finalAngle) * 7.5 - Math.sin(finalAngle) * 7.5;
+      const baseBotY = currentY + Math.sin(finalAngle) * 7.5 + Math.cos(finalAngle) * 7.5;
+
       segments.push({
-        x1: currentX, y1: currentY,
-        x2: gripperBaseX, y2: gripperBaseY,
-        radius: 15
+        x1: baseTopX, y1: baseTopY,
+        x2: baseBotX, y2: baseBotY,
+        radius: 7.5
       });
 
       const openAngle = (grip.extension / 127) * (Math.PI / 4);
