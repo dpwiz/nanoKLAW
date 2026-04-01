@@ -526,6 +526,7 @@ export default function ManipulatorVis({ arm1, arm2, onReset, onRandomize, isVac
       const bounds = 800;
       const maxEv = 30;
 
+      // --- AI & Friction (Once per frame) ---
       for (let i = 0; i < balls.length; i++) {
         const b = balls[i];
         
@@ -737,104 +738,162 @@ export default function ManipulatorVis({ arm1, arm2, onReset, onRandomize, isVac
           }
         }
 
-        if (!b.isDragged) {
-          b.x += b.vx;
-          b.y += b.vy;
-        }
-        
         // Increased floor friction (was 0.94)
         b.vx *= 0.82; 
         b.vy *= 0.82;
+      }
 
-        // Bounds collision (more energy loss on bounce)
-        if (!b.isDragged) {
-          if (b.x < -bounds + b.radius) { b.x = -bounds + b.radius; b.vx *= -0.5; }
-          if (b.x > bounds - b.radius) { b.x = bounds - b.radius; b.vx *= -0.5; }
-          if (b.y < -bounds + b.radius) { b.y = -bounds + b.radius; b.vy *= -0.5; }
-          if (b.y > bounds - b.radius) { b.y = bounds - b.radius; b.vy *= -0.5; }
-        }
+      // --- PHYSICS SUBSTEPS ---
+      const SUBSTEPS = 10;
+      for (let step = 1; step <= SUBSTEPS; step++) {
+        const t_prev = (step - 1) / SUBSTEPS;
+        const t_curr = step / SUBSTEPS;
+        
+        const interpPrevSegments = prevArmSegments.map((p, idx) => {
+          const c = currentArmSegments[idx];
+          return {
+            x1: p.x1 + (c.x1 - p.x1) * t_prev,
+            y1: p.y1 + (c.y1 - p.y1) * t_prev,
+            x2: p.x2 + (c.x2 - p.x2) * t_prev,
+            y2: p.y2 + (c.y2 - p.y2) * t_prev,
+            radius: p.radius
+          };
+        });
+        
+        const interpCurrSegments = prevArmSegments.map((p, idx) => {
+          const c = currentArmSegments[idx];
+          return {
+            x1: p.x1 + (c.x1 - p.x1) * t_curr,
+            y1: p.y1 + (c.y1 - p.y1) * t_curr,
+            x2: p.x2 + (c.x2 - p.x2) * t_curr,
+            y2: p.y2 + (c.y2 - p.y2) * t_curr,
+            radius: p.radius
+          };
+        });
 
-        // Arm collision (all segments)
-        for (let s = 0; s < currentArmSegments.length; s++) {
-          const seg = currentArmSegments[s];
-          const prevSeg = prevArmSegments[s] || seg;
-          
-          const dx = seg.x2 - seg.x1;
-          const dy = seg.y2 - seg.y1;
-          const len2 = dx * dx + dy * dy;
-          
-          let t = 0;
-          if (len2 > 0) {
-            t = ((b.x - seg.x1) * dx + (b.y - seg.y1) * dy) / len2;
-            t = Math.max(0, Math.min(1, t));
+        for (let i = 0; i < balls.length; i++) {
+          const b = balls[i];
+
+          if (!b.isDragged) {
+            b.x += b.vx / SUBSTEPS;
+            b.y += b.vy / SUBSTEPS;
           }
-          
-          const closestX = seg.x1 + t * dx;
-          const closestY = seg.y1 + t * dy;
-          
-          const distX = b.x - closestX;
-          const distY = b.y - closestY;
-          const dist = Math.sqrt(distX * distX + distY * distY);
-          const minDist = b.radius + seg.radius;
-          
-          if (dist < minDist && dist > 0) {
-            const overlap = minDist - dist;
-            const nx = distX / dist;
-            const ny = distY / dist;
-            
-            if (!b.isDragged) {
-              b.x += nx * overlap;
-              b.y += ny * overlap;
-            }
-            
-            const prevClosestX = prevSeg.x1 + t * (prevSeg.x2 - prevSeg.x1);
-            const prevClosestY = prevSeg.y1 + t * (prevSeg.y2 - prevSeg.y1);
-            
-            const segVx = closestX - prevClosestX;
-            const segVy = closestY - prevClosestY;
-            
-            const clampedEvX = Math.max(-maxEv, Math.min(maxEv, segVx));
-            const clampedEvY = Math.max(-maxEv, Math.min(maxEv, segVy));
-            
-            b.vx += clampedEvX * 0.25 + nx * 1.5;
-            b.vy += clampedEvY * 0.25 + ny * 1.5;
+
+          // Bounds collision (more energy loss on bounce)
+          if (!b.isDragged) {
+            if (b.x < -bounds + b.radius) { b.x = -bounds + b.radius; if (b.vx < 0) b.vx *= -0.5; }
+            if (b.x > bounds - b.radius) { b.x = bounds - b.radius; if (b.vx > 0) b.vx *= -0.5; }
+            if (b.y < -bounds + b.radius) { b.y = -bounds + b.radius; if (b.vy < 0) b.vy *= -0.5; }
+            if (b.y > bounds - b.radius) { b.y = bounds - b.radius; if (b.vy > 0) b.vy *= -0.5; }
           }
-        }
 
-        // Ball-ball collision
-        for (let j = i + 1; j < balls.length; j++) {
-          const b2 = balls[j];
-          const dx2 = b2.x - b.x;
-          const dy2 = b2.y - b.y;
-          const dist2 = Math.sqrt(dx2 * dx2 + dy2 * dy2);
-          const minDist2 = b.radius + b2.radius;
-
-          if (dist2 < minDist2 && dist2 > 0) {
-            const overlap = minDist2 - dist2;
-            const nx = dx2 / dist2;
-            const ny = dy2 / dist2;
+          // Arm collision (all segments)
+          for (let s = 0; s < interpCurrSegments.length; s++) {
+            const seg = interpCurrSegments[s];
+            const prevSeg = interpPrevSegments[s];
             
-            const massRatio1 = b2.radius / (b.radius + b2.radius);
-            const massRatio2 = b.radius / (b.radius + b2.radius);
+            const dx = seg.x2 - seg.x1;
+            const dy = seg.y2 - seg.y1;
+            const len2 = dx * dx + dy * dy;
             
-            if (!b.isDragged) {
-              b.x -= nx * overlap * massRatio1;
-              b.y -= ny * overlap * massRatio1;
+            let t = 0;
+            if (len2 > 0) {
+              t = ((b.x - seg.x1) * dx + (b.y - seg.y1) * dy) / len2;
+              t = Math.max(0, Math.min(1, t));
             }
-            if (!b2.isDragged) {
-              b2.x += nx * overlap * massRatio2;
-              b2.y += ny * overlap * massRatio2;
-            }
-
-            const kx = (b.vx - b2.vx);
-            const ky = (b.vy - b2.vy);
-            const p = 2 * (nx * kx + ny * ky) / (b.radius + b2.radius);
             
-            // More inelastic collision (was 0.8, now 0.5)
-            b.vx -= p * b2.radius * nx * 0.5;
-            b.vy -= p * b2.radius * ny * 0.5;
-            b2.vx += p * b.radius * nx * 0.5;
-            b2.vy += p * b.radius * ny * 0.5;
+            const closestX = seg.x1 + t * dx;
+            const closestY = seg.y1 + t * dy;
+            
+            const distX = b.x - closestX;
+            const distY = b.y - closestY;
+            const dist = Math.sqrt(distX * distX + distY * distY);
+            const minDist = b.radius + seg.radius;
+            
+            if (dist < minDist && dist > 0) {
+              const overlap = minDist - dist;
+              const nx = distX / dist;
+              const ny = distY / dist;
+              
+              if (!b.isDragged) {
+                b.x += nx * overlap;
+                b.y += ny * overlap;
+              }
+              
+              const prevClosestX = prevSeg.x1 + t * (prevSeg.x2 - prevSeg.x1);
+              const prevClosestY = prevSeg.y1 + t * (prevSeg.y2 - prevSeg.y1);
+              
+              const segVx = (closestX - prevClosestX) * SUBSTEPS;
+              const segVy = (closestY - prevClosestY) * SUBSTEPS;
+              
+              const relVx = b.vx - segVx;
+              const relVy = b.vy - segVy;
+              const relVelAlongNormal = relVx * nx + relVy * ny;
+              
+              if (relVelAlongNormal < 0) {
+                const restitution = 0.1;
+                const j = -(1 + restitution) * relVelAlongNormal;
+                b.vx += j * nx;
+                b.vy += j * ny;
+              }
+              
+              // Friction
+              const tangentX = -ny;
+              const tangentY = nx;
+              const relVelAlongTangent = relVx * tangentX + relVy * tangentY;
+              const friction = 0.5;
+              const jFriction = -relVelAlongTangent * friction;
+              b.vx += jFriction * tangentX;
+              b.vy += jFriction * tangentY;
+            }
+          }
+
+          // Ball-ball collision
+          for (let j = i + 1; j < balls.length; j++) {
+            const b2 = balls[j];
+            const dx2 = b2.x - b.x;
+            const dy2 = b2.y - b.y;
+            const dist2 = Math.sqrt(dx2 * dx2 + dy2 * dy2);
+            const minDist2 = b.radius + b2.radius;
+
+            if (dist2 < minDist2 && dist2 > 0) {
+              const overlap = minDist2 - dist2;
+              const nx = dx2 / dist2;
+              const ny = dy2 / dist2;
+              
+              const massRatio1 = b2.radius / (b.radius + b2.radius);
+              const massRatio2 = b.radius / (b.radius + b2.radius);
+              
+              if (!b.isDragged) {
+                b.x -= nx * overlap * massRatio1;
+                b.y -= ny * overlap * massRatio1;
+              }
+              if (!b2.isDragged) {
+                b2.x += nx * overlap * massRatio2;
+                b2.y += ny * overlap * massRatio2;
+              }
+
+              const kx = (b.vx - b2.vx);
+              const ky = (b.vy - b2.vy);
+              const relVelAlongNormal = nx * kx + ny * ky;
+              
+              if (relVelAlongNormal > 0) {
+                const restitution = 0.2;
+                const j = (1 + restitution) * relVelAlongNormal;
+                
+                const m1 = b.radius;
+                const m2 = b2.radius;
+                const totalMass = m1 + m2;
+                
+                const impulse1 = (j * m2) / totalMass;
+                const impulse2 = (j * m1) / totalMass;
+                
+                b.vx -= impulse1 * nx;
+                b.vy -= impulse1 * ny;
+                b2.vx += impulse2 * nx;
+                b2.vy += impulse2 * ny;
+              }
+            }
           }
         }
       }
