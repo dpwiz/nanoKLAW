@@ -65,6 +65,21 @@ export default function App() {
 
   useEffect(() => { localStorage.setItem('arm1Mode', JSON.stringify(arm1Mode)); }, [arm1Mode]);
   useEffect(() => { localStorage.setItem('arm2Mode', JSON.stringify(arm2Mode)); }, [arm2Mode]);
+
+  const [showUI, setShowUI] = useState(() => loadState('showUI', true));
+  useEffect(() => { localStorage.setItem('showUI', JSON.stringify(showUI)); }, [showUI]);
+
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return;
+      if (e.key === 'f' || e.key === 'F') {
+        setShowUI(prev => !prev);
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, []);
+
   const physicalArmsRef = useRef<{arm1: any, arm2: any}>({ arm1: null, arm2: null });
 
   const targetsRef = useRef({ arm1Segments, arm1Gripper, arm2Segments, arm2Gripper });
@@ -237,8 +252,9 @@ export default function App() {
   return (
     <div className="flex h-screen w-full bg-slate-950 text-slate-200 font-sans overflow-hidden">
       {/* Left Sidebar (Arm 1) */}
-      <div className="w-80 bg-slate-900 border-r border-slate-800 flex flex-col shadow-2xl z-10">
-        <div className="flex-1 overflow-y-auto p-4 custom-scrollbar">
+      {showUI && (
+        <div className="w-80 bg-slate-900 border-r border-slate-800 flex flex-col shadow-2xl z-10">
+          <div className="flex-1 overflow-y-auto p-4 custom-scrollbar">
           <div className="flex items-center justify-between mb-3 border-b border-slate-800 pb-2">
             <div>
               <h2 className="text-sm font-bold text-slate-200">Arm 1 (CC 0-3, 16-19)</h2>
@@ -285,10 +301,12 @@ export default function App() {
           />
         </div>
       </div>
+      )}
 
       {/* Main Vis */}
       <div className="flex-1 relative bg-[radial-gradient(ellipse_at_center,_var(--tw-gradient-stops))] from-slate-900 to-slate-950">
         <ManipulatorVis 
+          showUI={showUI}
           arm1={{ segments: arm1Segments, gripper: arm1Gripper }} 
           arm2={{ segments: arm2Segments, gripper: arm2Gripper }} 
           arm1Rate={arm1Rate}
@@ -312,8 +330,9 @@ export default function App() {
         />
 
         {/* Floating Left Panel (Dual Manipulator & MIDI Status) */}
-        <div className="absolute bottom-4 left-4 bg-slate-900/80 backdrop-blur border border-slate-700 p-4 rounded-xl shadow-2xl z-20 w-72 pointer-events-auto">
-          <div className="flex items-center justify-between mb-1">
+        {showUI && (
+          <div className="absolute bottom-4 left-4 bg-slate-900/80 backdrop-blur border border-slate-700 p-4 rounded-xl shadow-2xl z-20 w-72 pointer-events-auto">
+            <div className="flex items-center justify-between mb-1">
             <h1 className="text-lg font-bold text-emerald-400 tracking-tight flex items-center gap-2 pointer-events-none">
               <Settings className="w-5 h-5" />
               Dual Manipulator
@@ -341,9 +360,11 @@ export default function App() {
             )}
           </div>
         </div>
+        )}
       </div>
 
       {/* Right Sidebar (Arm 2) */}
+      {showUI && (
       <div className="w-80 bg-slate-900 border-l border-slate-800 flex flex-col shadow-2xl z-10">
         <div className="flex-1 overflow-y-auto p-4 custom-scrollbar">
           <div className="flex items-center justify-between mb-3 border-b border-slate-800 pb-2">
@@ -392,6 +413,7 @@ export default function App() {
           />
         </div>
       </div>
+      )}
     </div>
   );
 }

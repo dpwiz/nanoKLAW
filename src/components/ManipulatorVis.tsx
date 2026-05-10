@@ -8,6 +8,7 @@ interface ArmConfig {
 }
 
 interface Props {
+  showUI?: boolean;
   arm1: ArmConfig;
   arm2: ArmConfig;
   arm1Rate?: number;
@@ -41,7 +42,7 @@ interface Ball {
   isDragged?: boolean;
 }
 
-export default function ManipulatorVis({ arm1, arm2, arm1Rate = 1.0, arm2Rate = 1.0, isVacuumActive = true, markerTrigger = 0, arm1Mode = 'manual', arm2Mode = 'manual', onIkStatusChange, onArm1Change, onArm2Change }: Props) {
+export default function ManipulatorVis({ showUI = true, arm1, arm2, arm1Rate = 1.0, arm2Rate = 1.0, isVacuumActive = true, markerTrigger = 0, arm1Mode = 'manual', arm2Mode = 'manual', onIkStatusChange, onArm1Change, onArm2Change }: Props) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const [dimensions, setDimensions] = useState({ width: 800, height: 600 });
@@ -1627,6 +1628,7 @@ export default function ManipulatorVis({ arm1, arm2, arm1Rate = 1.0, arm2Rate = 
       onMouseLeave={handleMouseUp}
     >
       {/* Top Status Panel */}
+      {showUI && (
       <div className="absolute top-4 left-4 flex gap-4 pointer-events-none z-10">
         {robotStats.map((stat, i) => (
           <div key={i} className="bg-slate-900/80 backdrop-blur text-white p-4 rounded-xl border border-slate-700 shadow-lg flex flex-col gap-2 min-w-[200px] pointer-events-auto">
@@ -1664,12 +1666,14 @@ export default function ManipulatorVis({ arm1, arm2, arm1Rate = 1.0, arm2Rate = 
           </div>
         ))}
       </div>
+      )}
 
       <canvas
         ref={canvasRef}
         className="absolute inset-0 w-full h-full cursor-grab active:cursor-grabbing"
       />
       
+      {showUI && (
       <div className="absolute bottom-4 right-4 bg-slate-900/80 backdrop-blur border border-slate-700 p-4 rounded-xl shadow-2xl flex flex-col gap-4">
         <button 
           onClick={handleRandomizeBalls}
@@ -1678,6 +1682,7 @@ export default function ManipulatorVis({ arm1, arm2, arm1Rate = 1.0, arm2Rate = 
           <Shuffle className="w-3 h-3" /> Randomize Balls
         </button>
       </div>
+      )}
     </div>
   );
 }
