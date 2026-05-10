@@ -52,8 +52,8 @@ export default function App() {
   useEffect(() => { localStorage.setItem('arm1Flipped', JSON.stringify(arm1Flipped)); }, [arm1Flipped]);
   useEffect(() => { localStorage.setItem('arm2Flipped', JSON.stringify(arm2Flipped)); }, [arm2Flipped]);
 
-  const [arm1Mode, setArm1Mode] = useState<'manual' | 'drifting' | 'ik'>(() => loadState('arm1Mode', 'manual'));
-  const [arm2Mode, setArm2Mode] = useState<'manual' | 'drifting' | 'ik'>(() => loadState('arm2Mode', 'manual'));
+  const [arm1Mode, setArm1Mode] = useState<'manual' | 'drifting' | 'ik'>(() => loadState('arm1Mode', 'ik'));
+  const [arm2Mode, setArm2Mode] = useState<'manual' | 'drifting' | 'ik'>(() => loadState('arm2Mode', 'ik'));
   const [arm1Status, setArm1Status] = useState('manual');
   const [arm2Status, setArm2Status] = useState('manual');
 

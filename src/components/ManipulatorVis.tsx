@@ -1207,10 +1207,15 @@ export default function ManipulatorVis({ showUI = true, arm1, arm2, arm1Rate = 1
                   }
                 } else if (Math.random() < 0.3) {
                   // Look for a ball to push
+                  const claimedBallIndices = balls
+                    .filter(otherRb => otherRb !== b && otherRb.state === 'pushing' && otherRb.targetBallIdx !== undefined)
+                    .map(otherRb => otherRb.targetBallIdx);
+
                   let bestBallIdx = -1;
                   let bestScore = -Infinity;
                   balls.forEach((other, idx) => {
                     if (other.isVacuum || other === b) return;
+                    if (claimedBallIndices.includes(idx)) return;
                     const distCenterSq = other.x * other.x + other.y * other.y;
                     if (distCenterSq < 120 * 120) return; // already close enough
                     
