@@ -10,8 +10,6 @@ interface ArmConfig {
 interface Props {
   arm1: ArmConfig;
   arm2: ArmConfig;
-  onReset: () => void;
-  onRandomize: () => void;
   isVacuumActive?: boolean;
   markerTrigger?: number;
 }
@@ -25,21 +23,23 @@ interface Ball {
   color: string;
   isVacuum?: boolean;
   angle?: number;
-  state?: 'rolling' | 'turning' | 'reversing' | 'seeking' | 'going_home' | 'resting';
+  state?: 'rolling' | 'turning' | 'reversing' | 'seeking' | 'going_home' | 'resting' | 'pushing';
   stateTimer?: number;
   targetAngle?: number;
   targetsWiped?: number;
   targetStation?: number;
   targetMarkerId?: number;
+  targetBallIdx?: number;
   timeSinceCharge?: number;
   isDragged?: boolean;
 }
 
-export default function ManipulatorVis({ arm1, arm2, onReset, onRandomize, isVacuumActive = true, markerTrigger = 0 }: Props) {
+export default function ManipulatorVis({ arm1, arm2, isVacuumActive = true, markerTrigger = 0 }: Props) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const [dimensions, setDimensions] = useState({ width: 800, height: 600 });
   const [robotStats, setRobotStats] = useState<{id: number, state: string, timeSinceCharge: number, cargo: number, stateTimer: number}[]>([]);
+  const [cameraTargetIdx, setCameraTargetIdx] = useState<number | null>(null);
   
   const [transform, setTransform] = useState({ x: 0, y: 0, scale: 1 });
   const isPanning = useRef(false);
@@ -51,12 +51,14 @@ export default function ManipulatorVis({ arm1, arm2, onReset, onRandomize, isVac
   const latestTransform = useRef(transform);
   const latestDimensions = useRef(dimensions);
   const latestVacuumActive = useRef(isVacuumActive);
+  const latestCameraTargetIdx = useRef(cameraTargetIdx);
 
   useEffect(() => { latestArm1.current = arm1; }, [arm1]);
   useEffect(() => { latestArm2.current = arm2; }, [arm2]);
   useEffect(() => { latestTransform.current = transform; }, [transform]);
   useEffect(() => { latestDimensions.current = dimensions; }, [dimensions]);
   useEffect(() => { latestVacuumActive.current = isVacuumActive; }, [isVacuumActive]);
+  useEffect(() => { latestCameraTargetIdx.current = cameraTargetIdx; }, [cameraTargetIdx]);
 
   const ballsRef = useRef<Ball[]>([]);
   const markersRef = useRef<{id: number, x: number, y: number}[]>([]);
@@ -99,8 +101,14 @@ export default function ManipulatorVis({ arm1, arm2, onReset, onRandomize, isVac
       const rect = canvas.getBoundingClientRect();
       const mouseX = e.clientX - rect.left;
       const mouseY = e.clientY - rect.top;
-      const cx = mouseX - rect.width / 2;
-      const cy = mouseY - rect.height / 2;
+      
+      let cx = mouseX - rect.width / 2;
+      let cy = mouseY - rect.height / 2;
+
+      if (latestCameraTargetIdx.current !== null) {
+        cx = 0;
+        cy = 0;
+      }
 
       setTransform(prev => {
         const newScale = Math.max(0.1, Math.min(5, prev.scale * (1 + delta)));
@@ -204,6 +212,18 @@ export default function ManipulatorVis({ arm1, arm2, onReset, onRandomize, isVac
     }, 1000);
     return () => clearInterval(interval);
   }, []);
+
+  const handleRandomizeBalls = () => {
+    if (!ballsRef.current) return;
+    ballsRef.current.forEach(b => {
+      if (!b.isVacuum) {
+        b.x = (Math.random() - 0.5) * 1000;
+        b.y = (Math.random() - 0.5) * 1000;
+        b.vx = (Math.random() - 0.5) * 10;
+        b.vy = (Math.random() - 0.5) * 10;
+      }
+    });
+  };
 
   // Animation & Physics loop
   useEffect(() => {
@@ -496,9 +516,29 @@ export default function ManipulatorVis({ arm1, arm2, onReset, onRandomize, isVac
     const render = () => {
       const dpr = window.devicePixelRatio || 1;
       const { width, height } = latestDimensions.current;
-      const transform = latestTransform.current;
       const a1 = latestArm1.current;
       const a2 = latestArm2.current;
+
+      const tgtIdx = latestCameraTargetIdx.current;
+      if (tgtIdx !== null && ballsRef.current) {
+        const vacuumBalls = ballsRef.current.filter(b => b.isVacuum);
+        const targetRobot = vacuumBalls[tgtIdx];
+        if (targetRobot) {
+          const t = latestTransform.current;
+          const idealX = -targetRobot.x * t.scale;
+          const idealY = -targetRobot.y * t.scale;
+          const dx = idealX - t.x;
+          const dy = idealY - t.y;
+          
+          if (Math.abs(dx) > 0.1 || Math.abs(dy) > 0.1) {
+            t.x += dx * 0.05;
+            t.y += dy * 0.05;
+            // update react state eventually to keep UI in sync, but throttling is good too
+            // we'll update it every 15 frames along with stats
+          }
+        }
+      }
+      const transform = latestTransform.current;
       
       frameCount++;
 
@@ -712,13 +752,79 @@ export default function ManipulatorVis({ arm1, arm2, onReset, onRandomize, isVac
                 b.state = 'rolling';
                 b.stateTimer = 0;
               }
-            } else {
+            } else if (b.state === 'pushing') {
+              const other = balls[b.targetBallIdx!];
+              if (!other || other.isVacuum || other.isDragged || b.stateTimer > 7200) {
+                b.state = 'rolling';
+                b.stateTimer = 0;
+                b.targetBallIdx = undefined;
+              } else {
+                const distCenter = Math.sqrt(other.x * other.x + other.y * other.y);
+                if (distCenter < 120) {
+                  // Ball is in the pile, stop pushing
+                  b.state = 'turning';
+                  b.stateTimer = 0;
+                  b.targetAngle = (b.angle || 0) + Math.PI;
+                  b.targetBallIdx = undefined;
+                } else {
+                  const dirToCenterAngle = Math.atan2(-other.y, -other.x);
+                  const angleToBall = Math.atan2(other.y - b.y, other.x - b.x);
+                  const angleDiff = Math.abs(Math.atan2(Math.sin(angleToBall - dirToCenterAngle), Math.cos(angleToBall - dirToCenterAngle)));
+
+                  const robotSpeed = 4;
+                  if (angleDiff < 0.4) {
+                    // Robot is behind ball, push!
+                    b.targetAngle = angleToBall;
+                  } else {
+                    // Navigate to back of ball
+                    const idealX = other.x - Math.cos(dirToCenterAngle) * (b.radius + other.radius + 40);
+                    const idealY = other.y - Math.sin(dirToCenterAngle) * (b.radius + other.radius + 40);
+                    b.targetAngle = Math.atan2(idealY - b.y, idealX - b.x);
+                  }
+
+                  const diff = b.targetAngle - (b.angle || 0);
+                  const normalizedDiff = Math.atan2(Math.sin(diff), Math.cos(diff));
+                  b.angle = (b.angle || 0) + Math.sign(normalizedDiff) * 0.1;
+
+                  b.vx += (Math.cos(b.angle || 0) * robotSpeed - b.vx) * 0.1;
+                  b.vy += (Math.sin(b.angle || 0) * robotSpeed - b.vy) * 0.1;
+                }
+              }
+            } else { // default is rolling
               if (b.stateTimer > 120 + Math.random() * 60) {
                 if (Math.random() < 0.05) {
                   const stationIdx = getUnclaimedStation(b, balls);
                   if (stationIdx !== -1) {
                     b.state = 'going_home';
                     b.targetStation = stationIdx;
+                  } else {
+                    b.state = 'turning';
+                    b.stateTimer = 0;
+                    b.targetAngle = (b.angle || 0) + (Math.random() - 0.5) * Math.PI;
+                  }
+                } else if (Math.random() < 0.3) {
+                  // Look for a ball to push
+                  let bestBallIdx = -1;
+                  let bestScore = -Infinity;
+                  balls.forEach((other, idx) => {
+                    if (other.isVacuum || other === b) return;
+                    const distCenterSq = other.x * other.x + other.y * other.y;
+                    if (distCenterSq < 120 * 120) return; // already close enough
+                    
+                    const distRobotSq = (other.x - b.x)**2 + (other.y - b.y)**2;
+                    // Prefer further from center, closer to robot
+                    const score = Math.sqrt(distCenterSq) - Math.sqrt(distRobotSq);
+                    
+                    if (score > bestScore) {
+                      bestScore = score;
+                      bestBallIdx = idx;
+                    }
+                  });
+                  
+                  if (bestBallIdx !== -1) {
+                    b.state = 'pushing';
+                    b.stateTimer = 0;
+                    b.targetBallIdx = bestBallIdx;
                   } else {
                     b.state = 'turning';
                     b.stateTimer = 0;
@@ -1021,6 +1127,9 @@ export default function ManipulatorVis({ arm1, arm2, onReset, onRandomize, isVac
           stateTimer: b.stateTimer || 0
         }));
         setRobotStats(stats);
+        if (latestCameraTargetIdx.current !== null) {
+          setTransform({ ...latestTransform.current });
+        }
       }
 
       animationFrameId = requestAnimationFrame(render);
@@ -1035,6 +1144,7 @@ export default function ManipulatorVis({ arm1, arm2, onReset, onRandomize, isVac
     if (e.button === 1) { // Middle click
       isPanning.current = true;
       lastMouse.current = { x: e.clientX, y: e.clientY };
+      if (cameraTargetIdx !== null) setCameraTargetIdx(null);
       e.preventDefault();
     } else if (e.button === 0) { // Left click
       const rect = containerRef.current?.getBoundingClientRect();
@@ -1122,12 +1232,23 @@ export default function ManipulatorVis({ arm1, arm2, onReset, onRandomize, isVac
       {/* Top Status Panel */}
       <div className="absolute top-4 left-4 flex gap-4 pointer-events-none z-10">
         {robotStats.map((stat, i) => (
-          <div key={i} className="bg-slate-900/80 backdrop-blur text-white p-4 rounded-xl border border-slate-700 shadow-lg flex flex-col gap-2 min-w-[200px]">
-             <div className="font-bold text-slate-300 text-sm uppercase tracking-wider flex items-center gap-2">
-               <div className={`w-3 h-3 rounded-full ${stat.state === 'resting' ? 'bg-blue-500' : stat.state === 'going_home' ? 'bg-yellow-500' : 'bg-emerald-500'}`} />
-               Robot {stat.id}
+          <div key={i} className="bg-slate-900/80 backdrop-blur text-white p-4 rounded-xl border border-slate-700 shadow-lg flex flex-col gap-2 min-w-[200px] pointer-events-auto">
+             <div className="font-bold text-slate-300 text-sm uppercase tracking-wider flex items-center justify-between">
+               <div className="flex items-center gap-2">
+                 <div className={`w-3 h-3 rounded-full ${stat.state === 'resting' ? 'bg-blue-500' : stat.state === 'going_home' ? 'bg-yellow-500' : 'bg-emerald-500'}`} />
+                 Robot {stat.id}
+               </div>
+               <button 
+                 onClick={(e) => {
+                   e.stopPropagation();
+                   setCameraTargetIdx(cameraTargetIdx === i ? null : i);
+                 }}
+                 className={`text-[10px] px-2 py-0.5 rounded transition-colors ${cameraTargetIdx === i ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/50' : 'bg-slate-800 text-slate-400 border border-slate-700 hover:bg-slate-700'}`}
+               >
+                 {cameraTargetIdx === i ? 'FOLLOWING' : 'FOLLOW'}
+               </button>
              </div>
-             <div className="flex justify-between items-center">
+             <div className="flex justify-between items-center mt-1">
                <span className="text-slate-400 text-sm">State:</span>
                <span className="font-mono text-emerald-400 text-sm">{stat.state.replace('_', ' ')}</span>
              </div>
@@ -1153,30 +1274,12 @@ export default function ManipulatorVis({ arm1, arm2, onReset, onRandomize, isVac
       />
       
       <div className="absolute bottom-4 right-4 bg-slate-900/80 backdrop-blur border border-slate-700 p-4 rounded-xl shadow-2xl flex flex-col gap-4">
-        <div>
-          <h3 className="text-emerald-400 font-mono text-sm mb-2">SYSTEM STATUS</h3>
-          <div className="grid grid-cols-2 gap-x-6 gap-y-1 text-xs font-mono text-slate-300">
-            <div>ARMS: 2</div>
-            <div>DOF: 16</div>
-            <div>SCALE: {transform.scale.toFixed(2)}x</div>
-            <div>MODE: DUAL</div>
-          </div>
-        </div>
-        
-        <div className="flex gap-2 pt-3 border-t border-slate-700/50">
-          <button 
-            onClick={onReset}
-            className="flex-1 flex items-center justify-center gap-2 bg-slate-800 hover:bg-slate-700 text-slate-300 py-1.5 rounded-lg text-xs font-semibold transition-colors border border-slate-700"
-          >
-            <RefreshCw className="w-3 h-3" /> Reset
-          </button>
-          <button 
-            onClick={onRandomize}
-            className="flex-1 flex items-center justify-center gap-2 bg-slate-800 hover:bg-slate-700 text-slate-300 py-1.5 rounded-lg text-xs font-semibold transition-colors border border-slate-700"
-          >
-            <Shuffle className="w-3 h-3" /> Random
-          </button>
-        </div>
+        <button 
+          onClick={handleRandomizeBalls}
+          className="flex items-center justify-center gap-2 bg-slate-800 hover:bg-slate-700 text-slate-300 py-1.5 px-4 rounded-lg text-xs font-semibold transition-colors border border-slate-700"
+        >
+          <Shuffle className="w-3 h-3" /> Randomize Balls
+        </button>
       </div>
     </div>
   );

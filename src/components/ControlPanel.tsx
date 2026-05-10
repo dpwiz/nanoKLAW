@@ -1,6 +1,6 @@
 import React from 'react';
 import { SegmentConfig } from '../types';
-import { RotateCcw, Maximize2, Grip } from 'lucide-react';
+import { RotateCcw, Maximize2, Grip, RefreshCw } from 'lucide-react';
 
 interface Props {
   segments: SegmentConfig[];
@@ -8,14 +8,19 @@ interface Props {
   onChange: (id: number, field: keyof SegmentConfig, value: number) => void;
   onGripperChange: (field: 'rotation' | 'extension', value: number) => void;
   segmentTitlePrefix: string;
-  gripperIdLabel: string;
+  baseCc: number;
+  flipped: boolean;
+  onReset: () => void;
 }
 
 export default function ControlPanel({ 
   segments, gripper, 
   onChange, onGripperChange, 
-  segmentTitlePrefix, gripperIdLabel
+  segmentTitlePrefix, baseCc, flipped, onReset
 }: Props) {
+
+  const getCcId = (idx: number) => flipped ? baseCc + (3 - idx) : baseCc + idx;
+
 
   const renderSegmentControls = (
     segments: SegmentConfig[], 
@@ -26,7 +31,7 @@ export default function ControlPanel({
       <div key={seg.id} className="bg-slate-800/40 rounded-lg p-3 border border-slate-700/50 hover:border-slate-600/50 transition-colors">
         <div className="text-xs font-bold text-slate-400 mb-3 uppercase tracking-wider flex justify-between">
           <span>{titlePrefix} {idx + 1}</span>
-          <span className="text-slate-500 font-mono">ID: {seg.id}</span>
+          <span className="text-slate-500 font-mono">ID: {getCcId(idx)}</span>
         </div>
         
         <div className="space-y-4">
@@ -69,14 +74,13 @@ export default function ControlPanel({
   const renderGripperControl = (
     gripper: { rotation: number; extension: number },
     onChange: (field: 'rotation' | 'extension', value: number) => void,
-    title: string,
-    idLabel: string
+    title: string
   ) => {
     return (
       <div className="bg-slate-800/60 rounded-lg p-3 border border-slate-600/50 hover:border-slate-500/50 transition-colors">
         <div className="text-xs font-bold text-slate-300 mb-3 uppercase tracking-wider flex justify-between">
           <span className="flex items-center gap-1.5"><Grip className="w-4 h-4 text-rose-500" /> {title}</span>
-          <span className="text-slate-500 font-mono">ID: {idLabel}</span>
+          <span className="text-slate-500 font-mono">ID: {getCcId(3)}</span>
         </div>
         
         <div className="space-y-4">
@@ -118,8 +122,14 @@ export default function ControlPanel({
 
   return (
     <div className="space-y-4 pb-8">
+      <button 
+        onClick={onReset}
+        className="w-full flex items-center justify-center gap-2 bg-slate-800 hover:bg-slate-700 text-slate-300 py-1.5 rounded-lg text-xs font-semibold transition-colors border border-slate-700 mb-2"
+      >
+        <RefreshCw className="w-3 h-3" /> Reset {segmentTitlePrefix.split(' ')[0]}
+      </button>
       {renderSegmentControls(segments, onChange, segmentTitlePrefix)}
-      {renderGripperControl(gripper, onGripperChange, `${segmentTitlePrefix} Gripper`, gripperIdLabel)}
+      {renderGripperControl(gripper, onGripperChange, `${segmentTitlePrefix} Gripper`)}
     </div>
   );
 }
