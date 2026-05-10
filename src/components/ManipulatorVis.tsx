@@ -104,10 +104,13 @@ export default function ManipulatorVis({ showUI = true, arm1, arm2, arm1Rate = 1
 
   useEffect(() => {
     if (markerTrigger && markerTrigger > 0) {
+      const { width, height } = latestDimensions.current;
+      const boundsX = width / 2 - 20;
+      const boundsY = height / 2 - 20;
       markersRef.current.push({
         id: Date.now() + Math.random(),
-        x: (Math.random() - 0.5) * 1400, // bounds is 800, so -700 to 700
-        y: (Math.random() - 0.5) * 1400
+        x: (Math.random() - 0.5) * (boundsX * 2 - 40),
+        y: (Math.random() - 0.5) * (boundsY * 2 - 40)
       });
     }
   }, [markerTrigger]);
@@ -184,8 +187,8 @@ export default function ManipulatorVis({ showUI = true, arm1, arm2, arm1Rate = 1
       let vacuumCount = loadedBalls.filter(b => b.isVacuum).length;
       while (vacuumCount < 4) {
         loadedBalls.unshift({
-          x: (Math.random() - 0.5) * 1000,
-          y: (Math.random() - 0.5) * 1000,
+          x: (Math.random() - 0.5) * (latestDimensions.current.width - 100) || 0,
+          y: (Math.random() - 0.5) * (latestDimensions.current.height - 100) || 0,
           vx: 0, vy: 0,
           radius: 20,
           color: '#333333',
@@ -223,8 +226,8 @@ export default function ManipulatorVis({ showUI = true, arm1, arm2, arm1Rate = 1
     for (let i = 0; i < 30; i++) {
       const isVac = i < 4;
       initialBalls.push({
-        x: (Math.random() - 0.5) * 1000,
-        y: (Math.random() - 0.5) * 1000,
+        x: (Math.random() - 0.5) * (latestDimensions.current.width - 100) || 0,
+        y: (Math.random() - 0.5) * (latestDimensions.current.height - 100) || 0,
         vx: 0,
         vy: 0,
         radius: isVac ? 20 : 10 + Math.random() * 10,
@@ -255,8 +258,8 @@ export default function ManipulatorVis({ showUI = true, arm1, arm2, arm1Rate = 1
     if (!ballsRef.current) return;
     ballsRef.current.forEach(b => {
       if (!b.isVacuum) {
-        b.x = (Math.random() - 0.5) * 1000;
-        b.y = (Math.random() - 0.5) * 1000;
+        b.x = (Math.random() - 0.5) * (latestDimensions.current.width - 100) || 0;
+        b.y = (Math.random() - 0.5) * (latestDimensions.current.height - 100) || 0;
         b.vx = (Math.random() - 0.5) * 10;
         b.vy = (Math.random() - 0.5) * 10;
       }
@@ -529,12 +532,16 @@ export default function ManipulatorVis({ showUI = true, arm1, arm2, arm1Rate = 1
       ctx.restore();
     };
 
-    const STATIONS = [
-      { x: -700, y: -700 },
-      { x: 700, y: -700 },
-      { x: -700, y: 700 },
-      { x: 700, y: 700 },
-    ];
+    const getStations = (width: number, height: number) => {
+      const bx = width / 2 - 20;
+      const by = height / 2 - 20;
+      return [
+        { x: -bx + 100, y: -by + 100 },
+        { x: bx - 100, y: -by + 100 },
+        { x: -bx + 100, y: by - 100 },
+        { x: bx - 100, y: by - 100 },
+      ];
+    };
 
     const runCCDIK = (armToModify: ArmConfig, targetX: number, targetY: number, startX: number, startY: number, startAngle: number) => {
       let cx = startX;
@@ -832,17 +839,17 @@ export default function ManipulatorVis({ showUI = true, arm1, arm2, arm1Rate = 1
       }
     };
 
-    const getUnclaimedStation = (b: Ball, allBalls: Ball[]) => {
+    const getUnclaimedStation = (b: Ball, allBalls: Ball[], stations: {x: number, y: number}[]) => {
       const claimed = allBalls
         .filter(other => other !== b && (other.state === 'going_home' || other.state === 'resting'))
         .map(other => other.targetStation);
       
       let bestIdx = -1;
       let minDist = Infinity;
-      for (let i = 0; i < STATIONS.length; i++) {
+      for (let i = 0; i < stations.length; i++) {
         if (claimed.includes(i)) continue;
-        const dx = STATIONS[i].x - b.x;
-        const dy = STATIONS[i].y - b.y;
+        const dx = stations[i].x - b.x;
+        const dy = stations[i].y - b.y;
         const dist = dx*dx + dy*dy;
         if (dist < minDist) {
           minDist = dist;
@@ -855,6 +862,9 @@ export default function ManipulatorVis({ showUI = true, arm1, arm2, arm1Rate = 1
     const render = () => {
       const dpr = window.devicePixelRatio || 1;
       const { width, height } = latestDimensions.current;
+      const stations = getStations(width, height);
+      const boundsX = width / 2 - 20;
+      const boundsY = height / 2 - 20;
       
       if (latestArm1Mode.current === 'ik') {
         runIKStateMachine(1);
@@ -961,7 +971,6 @@ export default function ManipulatorVis({ showUI = true, arm1, arm2, arm1Rate = 1
       const prevArmSegments = prevArmSegmentsRef.current.length > 0 ? prevArmSegmentsRef.current : currentArmSegments;
       prevArmSegmentsRef.current = currentArmSegments;
 
-      const bounds = 800;
       const maxEv = 30;
 
       // --- AI & Friction (Once per frame) ---
@@ -974,8 +983,8 @@ export default function ManipulatorVis({ showUI = true, arm1, arm2, arm1Rate = 1
             b.timeSinceCharge = (b.timeSinceCharge || 0) + 1;
             
             let hitWall = false;
-            if (b.x < -bounds + b.radius + 5 || b.x > bounds - b.radius - 5 || 
-                b.y < -bounds + b.radius + 5 || b.y > bounds - b.radius - 5) {
+            if (b.x < -boundsX + b.radius + 5 || b.x > boundsX - b.radius - 5 || 
+                b.y < -boundsY + b.radius + 5 || b.y > boundsY - b.radius - 5) {
               hitWall = true;
             }
 
@@ -1027,7 +1036,7 @@ export default function ManipulatorVis({ showUI = true, arm1, arm2, arm1Rate = 1
                 b.targetMarkerId = undefined;
                 
                 if (b.targetsWiped >= 5) {
-                  const stationIdx = getUnclaimedStation(b, balls);
+                  const stationIdx = getUnclaimedStation(b, balls, stations);
                   if (stationIdx !== -1) {
                     b.state = 'going_home';
                     b.stateTimer = 0;
@@ -1093,8 +1102,8 @@ export default function ManipulatorVis({ showUI = true, arm1, arm2, arm1Rate = 1
                 }
               }
             } else if (b.state === 'going_home') {
-              if (b.targetStation !== undefined && STATIONS[b.targetStation]) {
-                const target = STATIONS[b.targetStation];
+              if (b.targetStation !== undefined && stations[b.targetStation]) {
+                const target = stations[b.targetStation];
                 const dx = target.x - b.x;
                 const dy = target.y - b.y;
                 const dist = Math.sqrt(dx*dx + dy*dy);
@@ -1187,7 +1196,7 @@ export default function ManipulatorVis({ showUI = true, arm1, arm2, arm1Rate = 1
             } else { // default is rolling
               if (b.stateTimer > 120 + Math.random() * 60) {
                 if (Math.random() < 0.05) {
-                  const stationIdx = getUnclaimedStation(b, balls);
+                  const stationIdx = getUnclaimedStation(b, balls, stations);
                   if (stationIdx !== -1) {
                     b.state = 'going_home';
                     b.targetStation = stationIdx;
@@ -1285,10 +1294,10 @@ export default function ManipulatorVis({ showUI = true, arm1, arm2, arm1Rate = 1
 
           // Bounds collision (more energy loss on bounce)
           if (!b.isDragged) {
-            if (b.x < -bounds + b.radius) { b.x = -bounds + b.radius; if (b.vx < 0) b.vx *= -0.5; }
-            if (b.x > bounds - b.radius) { b.x = bounds - b.radius; if (b.vx > 0) b.vx *= -0.5; }
-            if (b.y < -bounds + b.radius) { b.y = -bounds + b.radius; if (b.vy < 0) b.vy *= -0.5; }
-            if (b.y > bounds - b.radius) { b.y = bounds - b.radius; if (b.vy > 0) b.vy *= -0.5; }
+            if (b.x < -boundsX + b.radius) { b.x = -boundsX + b.radius; if (b.vx < 0) b.vx *= -0.5; }
+            if (b.x > boundsX - b.radius) { b.x = boundsX - b.radius; if (b.vx > 0) b.vx *= -0.5; }
+            if (b.y < -boundsY + b.radius) { b.y = -boundsY + b.radius; if (b.vy < 0) b.vy *= -0.5; }
+            if (b.y > boundsY - b.radius) { b.y = boundsY - b.radius; if (b.vy > 0) b.vy *= -0.5; }
           }
 
           // Arm collision (all segments)
@@ -1421,7 +1430,7 @@ export default function ManipulatorVis({ showUI = true, arm1, arm2, arm1Rate = 1
       // Draw bounds
       ctx.strokeStyle = 'rgba(239, 68, 68, 0.3)';
       ctx.lineWidth = 4 / transform.scale;
-      ctx.strokeRect(-bounds, -bounds, bounds * 2, bounds * 2);
+      ctx.strokeRect(-boundsX, -boundsY, boundsX * 2, boundsY * 2);
 
       // Draw axes
       ctx.strokeStyle = 'rgba(51, 65, 85, 0.8)';
@@ -1432,7 +1441,7 @@ export default function ManipulatorVis({ showUI = true, arm1, arm2, arm1Rate = 1
       ctx.stroke();
 
       // Draw stations
-      STATIONS.forEach((s) => {
+      stations.forEach((s) => {
         ctx.fillStyle = 'rgba(59, 130, 246, 0.1)';
         ctx.strokeStyle = 'rgba(59, 130, 246, 0.4)';
         ctx.lineWidth = 2 / transform.scale;
