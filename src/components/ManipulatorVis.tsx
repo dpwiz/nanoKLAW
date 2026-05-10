@@ -10,8 +10,15 @@ interface ArmConfig {
 interface Props {
   arm1: ArmConfig;
   arm2: ArmConfig;
+  arm1Rate?: number;
+  arm2Rate?: number;
   isVacuumActive?: boolean;
   markerTrigger?: number;
+  arm1Mode?: 'manual' | 'drifting' | 'ik';
+  arm2Mode?: 'manual' | 'drifting' | 'ik';
+  onIkStatusChange?: (arm: 1 | 2, status: string) => void;
+  onArm1Change?: (segments: SegmentConfig[], gripper: {rotation: number, extension: number}) => void;
+  onArm2Change?: (segments: SegmentConfig[], gripper: {rotation: number, extension: number}) => void;
 }
 
 interface Ball {
@@ -34,7 +41,7 @@ interface Ball {
   isDragged?: boolean;
 }
 
-export default function ManipulatorVis({ arm1, arm2, isVacuumActive = true, markerTrigger = 0 }: Props) {
+export default function ManipulatorVis({ arm1, arm2, arm1Rate = 1.0, arm2Rate = 1.0, isVacuumActive = true, markerTrigger = 0, arm1Mode = 'manual', arm2Mode = 'manual', onIkStatusChange, onArm1Change, onArm2Change }: Props) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const [dimensions, setDimensions] = useState({ width: 800, height: 600 });
@@ -48,17 +55,47 @@ export default function ManipulatorVis({ arm1, arm2, isVacuumActive = true, mark
 
   const latestArm1 = useRef(arm1);
   const latestArm2 = useRef(arm2);
+  const latestArm1Rate = useRef(arm1Rate);
+  const latestArm2Rate = useRef(arm2Rate);
   const latestTransform = useRef(transform);
   const latestDimensions = useRef(dimensions);
   const latestVacuumActive = useRef(isVacuumActive);
   const latestCameraTargetIdx = useRef(cameraTargetIdx);
+  const latestArm1Mode = useRef(arm1Mode);
+  const latestArm2Mode = useRef(arm2Mode);
+  const latestOnIkStatusChange = useRef(onIkStatusChange);
+  const latestOnArm1Change = useRef(onArm1Change);
+  const latestOnArm2Change = useRef(onArm2Change);
 
   useEffect(() => { latestArm1.current = arm1; }, [arm1]);
   useEffect(() => { latestArm2.current = arm2; }, [arm2]);
+  useEffect(() => { latestArm1Rate.current = arm1Rate; }, [arm1Rate]);
+  useEffect(() => { latestArm2Rate.current = arm2Rate; }, [arm2Rate]);
   useEffect(() => { latestTransform.current = transform; }, [transform]);
   useEffect(() => { latestDimensions.current = dimensions; }, [dimensions]);
   useEffect(() => { latestVacuumActive.current = isVacuumActive; }, [isVacuumActive]);
   useEffect(() => { latestCameraTargetIdx.current = cameraTargetIdx; }, [cameraTargetIdx]);
+  useEffect(() => { latestArm1Mode.current = arm1Mode; }, [arm1Mode]);
+  useEffect(() => { latestArm2Mode.current = arm2Mode; }, [arm2Mode]);
+  useEffect(() => { latestOnIkStatusChange.current = onIkStatusChange; }, [onIkStatusChange]);
+  useEffect(() => { latestOnArm1Change.current = onArm1Change; }, [onArm1Change]);
+  useEffect(() => { latestOnArm2Change.current = onArm2Change; }, [onArm2Change]);
+
+  const physicalArm1Ref = useRef<ArmConfig>(JSON.parse(JSON.stringify(arm1)));
+  const physicalArm2Ref = useRef<ArmConfig>(JSON.parse(JSON.stringify(arm2)));
+  
+  type IKState = {
+    phase: 'idle' | 'reach' | 'grip' | 'lift' | 'move_to_drop' | 'drop',
+    ballIdx: number,
+    dropX: number,
+    dropY: number,
+    timer: number,
+    ignoreBallIdx?: number,
+    ignoreTimer?: number
+  };
+  
+  const ikState1Ref = useRef<IKState>({ phase: 'idle', ballIdx: -1, dropX: 0, dropY: 0, timer: 0 });
+  const ikState2Ref = useRef<IKState>({ phase: 'idle', ballIdx: -1, dropX: 0, dropY: 0, timer: 0 });
 
   const ballsRef = useRef<Ball[]>([]);
   const markersRef = useRef<{id: number, x: number, y: number}[]>([]);
@@ -144,7 +181,7 @@ export default function ManipulatorVis({ arm1, arm2, isVacuumActive = true, mark
 
     if (loadedBalls) {
       let vacuumCount = loadedBalls.filter(b => b.isVacuum).length;
-      while (vacuumCount < 2) {
+      while (vacuumCount < 4) {
         loadedBalls.unshift({
           x: (Math.random() - 0.5) * 1000,
           y: (Math.random() - 0.5) * 1000,
@@ -183,7 +220,7 @@ export default function ManipulatorVis({ arm1, arm2, isVacuumActive = true, mark
     const colors = ['#ef4444', '#f59e0b', '#10b981', '#3b82f6', '#8b5cf6', '#ec4899', '#06b6d4', '#eab308'];
     const initialBalls: Ball[] = [];
     for (let i = 0; i < 30; i++) {
-      const isVac = i < 2;
+      const isVac = i < 4;
       initialBalls.push({
         x: (Math.random() - 0.5) * 1000,
         y: (Math.random() - 0.5) * 1000,
@@ -338,7 +375,12 @@ export default function ManipulatorVis({ arm1, arm2, isVacuumActive = true, mark
         radius: 5
       });
 
-      return segments;
+      const jawCenter = {
+        x: currentX + Math.cos(finalAngle) * 35,
+        y: currentY + Math.sin(finalAngle) * 35
+      };
+
+      return { segments, jawCenter };
     };
 
     const renderArm = (ctx: CanvasRenderingContext2D, arm: ArmConfig, startX: number, startY: number, startAngle: number, scale: number) => {
@@ -493,6 +535,302 @@ export default function ManipulatorVis({ arm1, arm2, isVacuumActive = true, mark
       { x: 700, y: 700 },
     ];
 
+    const runCCDIK = (armToModify: ArmConfig, targetX: number, targetY: number, startX: number, startY: number, startAngle: number) => {
+      let cx = startX;
+      let cy = startY;
+      let ca = startAngle;
+      const pts = [{x: cx, y: cy, angle: ca}];
+      for(let i=0; i<3; i++) {
+        const relativeRad = ((armToModify.segments[i].rotation - 64)/64) * 135 * Math.PI/180;
+        ca += relativeRad;
+        const len = 40 + (armToModify.segments[i].extension/127)*(120-40);
+        cx += Math.cos(ca)*len;
+        cy += Math.sin(ca)*len;
+        pts.push({x: cx, y: cy, angle: ca});
+      }
+
+      const gripperRad = ((armToModify.gripper.rotation - 64)/64) * 135 * Math.PI/180;
+      const jawAngle = ca + gripperRad;
+      const endEffector = {
+        x: pts[3].x + Math.cos(jawAngle) * 35,
+        y: pts[3].y + Math.sin(jawAngle) * 35
+      };
+      
+      const IK_ITERATIONS = 20;
+      for (let iter = 0; iter < IK_ITERATIONS; iter++) {
+        for (let j = 3; j >= 0; j--) {
+          const pivot = pts[j];
+          
+          const ex = endEffector.x - pivot.x;
+          const ey = endEffector.y - pivot.y;
+          
+          const tx = targetX - pivot.x;
+          const ty = targetY - pivot.y;
+        
+        // 1. Extension (for segments 0,1,2 only)
+        if (j < 3) {
+          const segDx = pts[j+1].x - pivot.x;
+          const segDy = pts[j+1].y - pivot.y;
+          const segLen = Math.sqrt(segDx * segDx + segDy * segDy);
+          
+          if (segLen > 0.001) {
+            const dirX = segDx / segLen;
+            const dirY = segDy / segLen;
+            
+            // diff to target
+            const diffX = targetX - endEffector.x;
+            const diffY = targetY - endEffector.y;
+            
+            // Projection of diff onto segment direction
+            const extDelta = (dirX * diffX + dirY * diffY);
+            
+            // Map length delta to extension delta (extension 0-127 mapped to 40-120 length)
+            // 80 length units = 127 extension units. So 1 length unit = 127/80 extension units.
+            const extUnitsDelta = extDelta * (127 / 80);
+            
+            let currentExt = armToModify.segments[j].extension;
+            let nextExt = currentExt + extUnitsDelta;
+            
+            // Pull extension slightly towards 64
+            nextExt += (64 - nextExt) * 0.001;
+            
+            nextExt = Math.max(0, Math.min(127, nextExt));
+            
+            const actualExtDelta = nextExt - currentExt;
+            armToModify.segments[j].extension = nextExt;
+            
+            // Shift end effector by actual length change
+            const actualLenDelta = actualExtDelta * (80 / 127);
+            endEffector.x += dirX * actualLenDelta;
+            endEffector.y += dirY * actualLenDelta;
+            
+            // Shift subsequent pivots
+            for (let k = j + 1; k <= 3; k++) {
+              pts[k].x += dirX * actualLenDelta;
+              pts[k].y += dirY * actualLenDelta;
+            }
+          }
+        }
+        
+        // Update ex/ey for rotation part, they might have changed
+        const newEx = endEffector.x - pivot.x;
+        const newEy = endEffector.y - pivot.y;
+        
+        // 2. Rotation
+        const dot = newEx*tx + newEy*ty;
+        const cross = newEx*ty - newEy*tx;
+        const delta = Math.atan2(cross, dot);
+        
+        if (Math.abs(delta) > 0.001) {
+          const rotationProp = j === 3 ? armToModify.gripper.rotation : armToModify.segments[j].rotation;
+          
+          let currentRad = ((rotationProp - 64)/64) * 135 * Math.PI/180;
+          let newRad = currentRad + delta;
+          
+          // Gradually pull towards center (64) to avoid getting stuck at edges
+          newRad -= (currentRad * 0.001);
+          
+          const limitRad = 135 * Math.PI/180;
+          if (newRad < -limitRad) newRad = -limitRad;
+          if (newRad > limitRad) newRad = limitRad;
+          
+          let nextRot = 64 + (newRad / limitRad) * 64;
+          nextRot = Math.max(0, Math.min(127, nextRot));
+          let currentRot = rotationProp;
+          
+          let diff = nextRot - currentRot;
+          
+          if (j === 3) {
+            armToModify.gripper.rotation = currentRot + diff;
+          } else {
+            armToModify.segments[j].rotation = currentRot + diff;
+          }
+          
+          const actDelta = (diff / 64) * 135 * (Math.PI/180);
+          
+          for (let k = j + 1; k <= 3; k++) {
+            const pdx = pts[k].x - pivot.x;
+            const pdy = pts[k].y - pivot.y;
+            pts[k].x = pivot.x + pdx * Math.cos(actDelta) - pdy * Math.sin(actDelta);
+            pts[k].y = pivot.y + pdx * Math.sin(actDelta) + pdy * Math.cos(actDelta);
+          }
+          
+          const dx = endEffector.x - pivot.x;
+          const dy = endEffector.y - pivot.y;
+          endEffector.x = pivot.x + dx * Math.cos(actDelta) - dy * Math.sin(actDelta);
+          endEffector.y = pivot.y + dx * Math.sin(actDelta) + dy * Math.cos(actDelta);
+        }
+      }
+      }
+      return endEffector;
+    };
+
+    const stepIK = (arm: ArmConfig, targetX: number, targetY: number, startX: number, startY: number, startAngle: number) => {
+      // Create a backup of the current state
+      const backupArm = JSON.parse(JSON.stringify(arm)) as ArmConfig;
+      
+      // Try to solve from current pose
+      const end1 = runCCDIK(arm, targetX, targetY, startX, startY, startAngle);
+      const d1 = (end1.x - targetX)**2 + (end1.y - targetY)**2;
+      
+      // If we're stuck (distance > 20 pixels), try from a warm up 'straight' pose
+      if (d1 > 400) {
+        const straightArm = JSON.parse(JSON.stringify(backupArm)) as ArmConfig;
+        for (let i = 0; i < 3; i++) {
+          straightArm.segments[i].rotation = 64;
+          straightArm.segments[i].extension = 127;
+        }
+        straightArm.gripper.rotation = 64;
+        
+        const end2 = runCCDIK(straightArm, targetX, targetY, startX, startY, startAngle);
+        const d2 = (end2.x - targetX)**2 + (end2.y - targetY)**2;
+        
+        // Try fully bent pose occasionally
+        const bentArm = JSON.parse(JSON.stringify(backupArm)) as ArmConfig;
+        for (let i = 0; i < 3; i++) {
+          bentArm.segments[i].rotation = 0;
+          bentArm.segments[i].extension = 127;
+        }
+        bentArm.gripper.rotation = 0;
+        const end3 = runCCDIK(bentArm, targetX, targetY, startX, startY, startAngle);
+        const d3 = (end3.x - targetX)**2 + (end3.y - targetY)**2;
+
+        let bestArm = arm;
+        let bestDist = d1;
+        
+        if (d2 < bestDist - 10) {
+          bestArm = straightArm;
+          bestDist = d2;
+        }
+        if (d3 < bestDist - 10) {
+          bestArm = bentArm;
+          bestDist = d3;
+        }
+        
+        // Copy best solution back to arm
+        arm.gripper = bestArm.gripper;
+        arm.segments = bestArm.segments;
+      }
+    };
+
+    const runIKStateMachine = (armIndex: 1 | 2) => {
+      const state = armIndex === 1 ? ikState1Ref.current : ikState2Ref.current;
+      const latestArmRef = armIndex === 1 ? latestArm1 : latestArm2;
+      const physicalArmRef = armIndex === 1 ? physicalArm1Ref : physicalArm2Ref;
+      const onChangeRef = armIndex === 1 ? latestOnArm1Change : latestOnArm2Change;
+      const baseX = armIndex === 1 ? -200 : 200;
+      
+      const targetArm = JSON.parse(JSON.stringify(latestArmRef.current)) as ArmConfig;
+      const balls = ballsRef.current;
+
+      state.timer++;
+
+      if (state.phase === 'idle') {
+        if (state.ignoreTimer && state.ignoreTimer > 0) {
+          state.ignoreTimer--;
+        }
+        
+        let bestDist = Infinity;
+        let bestIdx = -1;
+        for (let i = 0; i < balls.length; i++) {
+          if (!balls[i].isVacuum && !balls[i].isDragged) {
+            if (i === state.ignoreBallIdx && state.ignoreTimer && state.ignoreTimer > 0) continue;
+            // Prevent picking up same ball as other arm
+            const otherState = armIndex === 1 ? ikState2Ref.current : ikState1Ref.current;
+            if (otherState.phase !== 'idle' && otherState.ballIdx === i) continue;
+            
+            const dxFromBase = balls[i].x - baseX;
+            const dyFromBase = balls[i].y - 0;
+            if (dxFromBase * dxFromBase + dyFromBase * dyFromBase < 280 * 280) {
+              const dist = balls[i].x * balls[i].x + balls[i].y * balls[i].y;
+              if (dist < bestDist) {
+                bestDist = dist;
+                bestIdx = i;
+              }
+            }
+          }
+        }
+        if (bestIdx !== -1) {
+          state.ballIdx = bestIdx;
+          state.phase = 'reach';
+          state.timer = 0;
+        }
+      } else if (state.phase === 'reach') {
+        const b = balls[state.ballIdx];
+        if (!b || b.isDragged) {
+          state.phase = 'idle';
+          return;
+        }
+        
+        targetArm.gripper.extension = Math.min(127, targetArm.gripper.extension + 2);
+        
+        stepIK(targetArm, b.x, b.y, baseX, 0, -Math.PI/2);
+        
+        const { jawCenter: tip } = computeArmSegments(physicalArmRef.current, baseX, 0, -Math.PI/2);
+        const dx = tip.x - b.x;
+        const dy = tip.y - b.y;
+        if (dx*dx+dy*dy < 2000 && state.timer > 30) {
+          state.phase = 'grip';
+          state.timer = 0;
+        } else if (state.timer > 300) {
+          state.phase = 'idle';
+          state.timer = 0;
+        }
+      } else if (state.phase === 'grip') {
+        const b = balls[state.ballIdx];
+        if (b && !b.isDragged) {
+          stepIK(targetArm, b.x, b.y, baseX, 0, -Math.PI/2);
+        }
+        
+        let targetExt = 0;
+        if (b) {
+          const desiredGap = b.radius * 1.6;
+          const sinOpen = Math.max(0, (desiredGap - 10) / 80);
+          const ang = Math.asin(sinOpen) * (180 / Math.PI);
+          targetExt = Math.round(Math.max(0, Math.min(127, (ang / 45) * 127)));
+        }
+        const GRIP_TARGET = targetExt;
+        targetArm.gripper.extension = Math.max(GRIP_TARGET, targetArm.gripper.extension - 2);
+        if (targetArm.gripper.extension === GRIP_TARGET || state.timer > 100) {
+          const r = Math.random() * 150 + 80;
+          const a = Math.random() * Math.PI * 2;
+          state.dropX = baseX + Math.cos(a) * r;
+          state.dropY = Math.sin(a) * r;
+          state.phase = 'move_to_drop';
+          state.timer = 0;
+        }
+      } else if (state.phase === 'move_to_drop') {
+        stepIK(targetArm, state.dropX, state.dropY, baseX, 0, -Math.PI/2);
+        
+        const { jawCenter: tip } = computeArmSegments(physicalArmRef.current, baseX, 0, -Math.PI/2);
+        const dx = tip.x - state.dropX;
+        const dy = tip.y - state.dropY;
+        if ((dx*dx+dy*dy < 400 && state.timer > 30) || state.timer > 300) {
+          state.phase = 'drop';
+          state.timer = 0;
+        }
+      } else if (state.phase === 'drop') {
+        targetArm.gripper.extension = Math.min(127, targetArm.gripper.extension + 2);
+        if (targetArm.gripper.extension === 127) {
+          state.phase = 'idle';
+          state.timer = 0;
+          state.ignoreBallIdx = state.ballIdx;
+          state.ignoreTimer = 180; // 3 seconds at 60fps
+          
+          for (let i = 0; i < 3; i++) {
+            targetArm.segments[i].rotation = 64;
+            targetArm.segments[i].extension = 64;
+          }
+          targetArm.gripper.rotation = 64;
+          targetArm.gripper.extension = 64;
+        }
+      }
+
+      if (onChangeRef.current) {
+        onChangeRef.current(targetArm.segments, targetArm.gripper);
+      }
+    };
+
     const getUnclaimedStation = (b: Ball, allBalls: Ball[]) => {
       const claimed = allBalls
         .filter(other => other !== b && (other.state === 'going_home' || other.state === 'resting'))
@@ -516,9 +854,14 @@ export default function ManipulatorVis({ arm1, arm2, isVacuumActive = true, mark
     const render = () => {
       const dpr = window.devicePixelRatio || 1;
       const { width, height } = latestDimensions.current;
-      const a1 = latestArm1.current;
-      const a2 = latestArm2.current;
-
+      
+      if (latestArm1Mode.current === 'ik') {
+        runIKStateMachine(1);
+      }
+      if (latestArm2Mode.current === 'ik') {
+        runIKStateMachine(2);
+      }
+      
       const tgtIdx = latestCameraTargetIdx.current;
       if (tgtIdx !== null && ballsRef.current) {
         const vacuumBalls = ballsRef.current.filter(b => b.isVacuum);
@@ -555,18 +898,68 @@ export default function ManipulatorVis({ arm1, arm2, isVacuumActive = true, mark
       ctx.translate(width / 2 + transform.x, height / 2 + transform.y);
       ctx.scale(transform.scale, transform.scale);
 
+      const interpolateArm = (target: ArmConfig, physical: ArmConfig, rateMultiplier: number) => {
+        const maxRotSpeed = 1.0 * (2/3) * rateMultiplier;
+        const maxExtSpeed = 2.0 * (2/3) * rateMultiplier;
+        for (let i = 0; i < 3; i++) {
+          const tRot = target.segments[i].rotation;
+          const pRot = physical.segments[i].rotation;
+          let diffRot = tRot - pRot;
+          if (diffRot > maxRotSpeed) diffRot = maxRotSpeed;
+          if (diffRot < -maxRotSpeed) diffRot = -maxRotSpeed;
+          physical.segments[i].rotation += diffRot;
+          
+          const tExt = target.segments[i].extension;
+          const pExt = physical.segments[i].extension;
+          let diffExt = tExt - pExt;
+          if (diffExt > maxExtSpeed) diffExt = maxExtSpeed;
+          if (diffExt < -maxExtSpeed) diffExt = -maxExtSpeed;
+          physical.segments[i].extension += diffExt;
+        }
+        
+        const tGRot = target.gripper.rotation;
+        const pGRot = physical.gripper.rotation;
+        let diffGRot = tGRot - pGRot;
+        if (diffGRot > maxRotSpeed) diffGRot = maxRotSpeed;
+        if (diffGRot < -maxRotSpeed) diffGRot = -maxRotSpeed;
+        physical.gripper.rotation += diffGRot;
+        
+        const tGExt = target.gripper.extension;
+        const pGExt = physical.gripper.extension;
+        let diffGExt = tGExt - pGExt;
+        if (diffGExt > maxExtSpeed) diffGExt = maxExtSpeed;
+        if (diffGExt < -maxExtSpeed) diffGExt = -maxExtSpeed;
+        physical.gripper.extension += diffGExt;
+      };
+
+      interpolateArm(latestArm1.current, physicalArm1Ref.current, latestArm1Rate.current);
+      interpolateArm(latestArm2.current, physicalArm2Ref.current, latestArm2Rate.current);
+
+      const physA1 = physicalArm1Ref.current;
+      const physA2 = physicalArm2Ref.current;
+
+      window.dispatchEvent(new CustomEvent('physical-arm-update', {
+        detail: {
+          arm1: { ...physA1, segments: [...physA1.segments] },
+          arm2: { ...physA2, segments: [...physA2.segments] },
+        }
+      }));
+
       // --- PHYSICS ---
       // Arm 1 positioned at x: -200, y: 0
-      const arm1Segments = computeArmSegments(a1, -200, 0, -Math.PI / 2);
+      const compute1 = computeArmSegments(physA1, -200, 0, -Math.PI / 2);
+      const arm1Segments = compute1.segments;
       // Arm 2 positioned at x: 200, y: 0
-      const arm2Segments = computeArmSegments(a2, 200, 0, -Math.PI / 2);
+      const compute2 = computeArmSegments(physA2, 200, 0, -Math.PI / 2);
+      const arm2Segments = compute2.segments;
 
       const currentArmSegments = [...arm1Segments, ...arm2Segments];
+      
+      const balls = ballsRef.current;
 
       const prevArmSegments = prevArmSegmentsRef.current.length > 0 ? prevArmSegmentsRef.current : currentArmSegments;
       prevArmSegmentsRef.current = currentArmSegments;
 
-      const balls = ballsRef.current;
       const bounds = 800;
       const maxEv = 30;
 
@@ -1112,8 +1505,8 @@ export default function ManipulatorVis({ arm1, arm2, isVacuumActive = true, mark
       });
 
       // Draw manipulators
-      renderArm(ctx, a1, -200, 0, -Math.PI / 2, transform.scale);
-      renderArm(ctx, a2, 200, 0, -Math.PI / 2, transform.scale);
+      renderArm(ctx, physA1, -200, 0, -Math.PI / 2, transform.scale);
+      renderArm(ctx, physA2, 200, 0, -Math.PI / 2, transform.scale);
 
       ctx.restore(); // restore transform
       ctx.restore(); // restore dpr
@@ -1129,6 +1522,10 @@ export default function ManipulatorVis({ arm1, arm2, isVacuumActive = true, mark
         setRobotStats(stats);
         if (latestCameraTargetIdx.current !== null) {
           setTransform({ ...latestTransform.current });
+        }
+        if (latestOnIkStatusChange.current) {
+          latestOnIkStatusChange.current(1, latestArm1Mode.current === 'ik' ? ikState1Ref.current.phase : latestArm1Mode.current);
+          latestOnIkStatusChange.current(2, latestArm2Mode.current === 'ik' ? ikState2Ref.current.phase : latestArm2Mode.current);
         }
       }
 
