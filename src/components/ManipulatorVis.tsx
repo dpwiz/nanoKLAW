@@ -863,8 +863,8 @@ export default function ManipulatorVis({ showUI = true, arm1, arm2, arm1Rate = 1
       const dpr = window.devicePixelRatio || 1;
       const { width, height } = latestDimensions.current;
       const stations = getStations(width, height);
-      const boundsX = width / 2 - 20;
-      const boundsY = height / 2 - 20;
+      const boundsX = 2000;
+      const boundsY = 2000;
       
       if (latestArm1Mode.current === 'ik') {
         runIKStateMachine(1);
